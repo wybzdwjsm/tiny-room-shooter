@@ -1,6 +1,17 @@
 # 发布前检查清单
 
-内容已冻结（v0.16）。下面每一项都能独立验证，打勾前不要跳。
+## 已完成（2026-11-16）
+
+- [x] **WebGL 打包成功**：Editor.log 记录 `[Build] WebGL 打包成功：Builds\WebGL，大小 3 MB，用时 162 秒`
+- [x] 构建内容验证：解压 `WebGL.data.br` 后能搜到「守灯人」「灯油只剩一夜」「潮眼」，确认打进去的是 v1.0 剧情而非旧版
+- [x] 上传包：`守灯人-v1.0-WebGL.zip`（3.47 MB），`index.html` 在压缩包根目录，可直接拖进 itch.io
+- [x] Git：两个提交（`d593594` 功能 + `110702a` 推送脚本），分支 `main`，工作区干净
+
+**仍待完成**：GitHub 上创建空仓库 `wybzdwjsm/tiny-room-shooter`（服务器返回 `Repository not found`），然后执行 `.\push-to-github.ps1`。
+
+---
+
+内容已冻结（v1.0）。下面每一项都能独立验证，打勾前不要跳。
 
 ## 一、打包（Unity 侧）
 
