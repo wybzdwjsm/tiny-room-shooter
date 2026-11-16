@@ -8,7 +8,7 @@
 
 - 试玩：<填 itch.io 链接>（WebGL，点开即玩）
 - 演示视频：<填 1–2 分钟实机视频链接>
-- 源码：<填 GitHub 仓库链接>
+- 源码：https://github.com/wybzdwjsm/tiny-room-shooter
 
 <!-- 建议放 3 张图：灰盒跑跳、三选一词条、结算页 -->
 
