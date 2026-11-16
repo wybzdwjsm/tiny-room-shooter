@@ -1280,8 +1280,13 @@ public class RunManager : MonoBehaviour
 
     private void DrawCrosshair()
     {
-        float x = Input.mousePosition.x;
-        float y = Screen.height - Input.mousePosition.y;
+        Vector3 mp = Input.mousePosition;
+        // 鼠标离开 Game 视图时可能是 NaN；NaN 塞进 Rect 会污染 IMGUI 布局，
+        // 进而导致编辑器的 UI Layout Error（RectTransform max=nan）。
+        if (float.IsNaN(mp.x) || float.IsNaN(mp.y)) return;
+
+        float x = mp.x;
+        float y = Screen.height - mp.y;
         GUI.Label(new Rect(x - 20f, y - 20f, 40f, 40f), "+", crosshairStyle);
     }
 

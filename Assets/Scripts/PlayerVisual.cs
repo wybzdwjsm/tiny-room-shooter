@@ -77,11 +77,18 @@ public class PlayerVisual : MonoBehaviour
 
     private void Update()
     {
-        // 眼睛看着准星：不用看准星也能知道自己在朝哪边打
+        // 眼睛看着准星：不用看准星也能知道自己在朝哪边打。
+        // 关键保护：鼠标不在 Game 视图内时 Input.mousePosition 可能是 NaN，
+        // 直接喂给 ScreenToWorldPoint 会每帧抛 "Screen position out of view frustum"，
+        // 把 Console 刷满红字（而且编辑器的暂停按钮会被这些异常拖住没反应）。
         if (cam != null)
         {
-            float mx = cam.ScreenToWorldPoint(Input.mousePosition).x;
-            faceDir = mx >= transform.position.x ? 1f : -1f;
+            Vector3 mp = Input.mousePosition;
+            if (!float.IsNaN(mp.x) && !float.IsNaN(mp.y) && mp.z >= 0f)
+            {
+                float mx = cam.ScreenToWorldPoint(mp).x;
+                if (!float.IsNaN(mx)) faceDir = mx >= transform.position.x ? 1f : -1f;
+            }
         }
         UpdateEyes();
     }

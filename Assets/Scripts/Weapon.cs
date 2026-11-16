@@ -70,8 +70,17 @@ public class Weapon : MonoBehaviour
     private Vector2 AimDirection()
     {
         if (cam == null) return Vector2.right;
-        Vector3 mouse = cam.ScreenToWorldPoint(Input.mousePosition);
-        Vector2 dir = (Vector2)(mouse - transform.position);
+
+        // 鼠标移出 Game 视图时 Input.mousePosition 可能变成 NaN，
+        // 直接传给 ScreenToWorldPoint 会每帧抛 "Screen position out of view frustum"。
+        // 这种时候保持上一次的有效朝向（这里是右），不要刷异常也不要乱开火。
+        Vector3 mp = Input.mousePosition;
+        if (float.IsNaN(mp.x) || float.IsNaN(mp.y) || mp.z < 0f) return Vector2.right;
+
+        Vector3 world = cam.ScreenToWorldPoint(mp);
+        if (float.IsNaN(world.x) || float.IsNaN(world.y)) return Vector2.right;
+
+        Vector2 dir = (Vector2)(world - transform.position);
         return dir.sqrMagnitude < 0.0001f ? Vector2.right : dir.normalized;
     }
 
