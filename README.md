@@ -1222,3 +1222,30 @@ Boss 的碰撞是**手算半径**（`contactRadiusX/Y`），不读 `transform.lo
 3. **最终以编辑器里 Console 0 error 为准**。自动检查只能排除低级错误，不能替代实际编译。
 
 这次的教训写下来，是为了以后不再对着一份不刷新的日志说"编译通过"。
+
+### 一个真实教训：替换代码块时删掉了还在用的字段
+
+v1.4 给 Boss 加视觉参数时，我用「替换整块字段声明」的方式编辑：
+
+```csharp
+// 原来的三行被我整个换掉了
+private Vector3 enterFrom;
+private Vector3 enterTo;
+private float enterDuration;
+```
+
+替换成了新的视觉字段（`flinch` / `chargeTrailTimer` 等）。结果 `Init()` 和 `UpdateEnter()`
+还在用那三个字段，编辑器直接报：
+
+```
+Assets\Scripts\Boss.cs(74,9): error CS0103: The name 'enterTo' does not exist in the current context
+```
+
+**根因**：编辑时把"新增字段"和"删除旧字段"混在一次整块替换里，没检查旧字段是否还有引用。
+
+**正确做法**：新增字段就用一次独立的小 Edit 追加，不要替换已有声明块。
+如果确实要删，先 grep 确认引用数为 0。
+
+这个 bug 也再次证明：静态检查（括号平衡、字段扫描）只能兜底一部分，
+**真正发现它的是编辑器 Console 的 CS0103**。所以任何"我这边检查过了"都不能替代
+在编辑器里按 `Ctrl+R` 后看一眼 Console。
