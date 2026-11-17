@@ -1,0 +1,7 @@
+# Unity 的 .meta 文件必须是 LF 行尾，CRLF 会导致团结引擎无法解析、资源加载失败
+# core.autocrlf=true 时 checkout 会把它们转成 CRLF，这里强制锁回 LF
+*.meta text eol=lf
+*.cs text eol=lf
+*.asset text eol=lf
+*.png binary
+*.zip binary
