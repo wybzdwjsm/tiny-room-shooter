@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v1.1";
+    public const string BuildTag = "v1.2";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -725,6 +725,7 @@ public class RunManager : MonoBehaviour
                 else tint = Color.white;
             }
             e.Init(hp, interval * paceScale, tint, firstDelay);
+            EnemyVisual.Attach(go);        // 独立视觉层：呼吸 / 蓄力膨胀 / 冲刺前倾，不碰碰撞体
 
             // 入场：从墙后面飞进来（墙的 sortingOrder 比敌人高，所以会先被墙挡住再"钻"出来）。
             // 每只飞的时长在 1.1~1.7 秒之间随机，并且彼此错开 0.12 秒；

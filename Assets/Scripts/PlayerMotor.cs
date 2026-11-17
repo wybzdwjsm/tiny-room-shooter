@@ -20,9 +20,14 @@ public class PlayerMotor : MonoBehaviour
     private bool jumpQueued;
     private bool cutQueued;
 
+    // 给视觉层（PlayerVisual）读：做落地压扁 / 跳跃拉伸 / 奔跑倾斜，不碰碰撞体
+    public bool Grounded { get { return grounded; } }
+    public float VerticalSpeed { get { return Velocity.y; } }
+    public float HorizontalSpeed { get { return Velocity.x; } }
+
     // Unity 6 用 linearVelocity；Unity 2022 / 团结引擎等分支用 velocity。
     // 用版本宏自动适配，避免一打开项目就编译报错。
-    private Vector2 Velocity
+    public Vector2 Velocity
     {
 #if UNITY_6000_0_OR_NEWER
         get { return rb.linearVelocity; }

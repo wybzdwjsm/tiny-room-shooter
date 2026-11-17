@@ -23,6 +23,13 @@ public static class ArtStore
     public static Sprite Turret { get { Ensure(); return turret; } }
     public static Sprite Boss { get { Ensure(); return boss; } }
 
+    // 判断某个 SpriteRenderer 用的是不是我们加载的美术（而不是兜底的纯色方块）
+    public static bool IsEnemySprite(Sprite s)
+    {
+        Ensure();
+        return s != null && (s == shooter || s == charger || s == turret || s == boss);
+    }
+
     private static void Ensure()
     {
         if (tried) return;

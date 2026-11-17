@@ -93,22 +93,24 @@ public class PlayerHealth : MonoBehaviour
         return true;
     }
 
-    // 玩家描边/眼睛在子物体上，闪烁时必须一起开关，
-    // 否则会出现"本体在闪、轮廓和眼睛一直亮着"的诡异画面
+    // 受伤闪烁状态：根节点 sr 由 PlayerVisual 接管，这里只记录并转发给视觉层
     private bool bodyVisible = true;
 
     private void ApplyVisible()
     {
-        if (sr != null) sr.enabled = bodyVisible;
-        PlayerVisual.SetVisible(bodyVisible);
+        // 根节点 sr 由 PlayerVisual 关掉以避免重影，闪烁统一交给视觉层处理；
+        // 只有 PlayerVisual 不存在时才退回直接开关根节点精灵
+        if (PlayerVisual.HasInstance) PlayerVisual.SetVisible(bodyVisible);
+        else if (sr != null) sr.enabled = bodyVisible;
     }
 
-    // PlayerVisual 会把本体改成暖白色，颜色基准要跟着更新，
+    // PlayerVisual 会把本体换成角色美术，颜色基准要跟着更新，
     // 否则下次 ResetHealth / 复活会把场景里的旧颜色盖回去
     public void SetBaseColor(Color c)
     {
         baseColor = c;
         if (sr != null) sr.color = c;
+        PlayerVisual.SetTint(c);       // 同步到真正的美术精灵
     }
 
     public void ResetHealth()

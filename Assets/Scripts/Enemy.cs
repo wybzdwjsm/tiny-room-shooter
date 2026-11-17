@@ -12,12 +12,33 @@ public class Enemy : MonoBehaviour
     public string TypeName = "普通怪";
     public Kind kind = Kind.Shooter;
 
+    // 给视觉层读：开火预警进度 0~1，用来做"蓄力膨胀"，让"要开枪了"除了变色还有形变
+    public float TelegraphProgress
+    {
+        get
+        {
+            if (kind == Kind.Charger) return 0f;
+            return fireTimer <= 0.28f ? 1f - Mathf.Clamp01(fireTimer / 0.28f) : 0f;
+        }
+    }
+
     [SerializeField] private int hp = 3;
     [SerializeField] private float knockback = 0.25f;
     [SerializeField] private float flashTime = 0.08f;
     [SerializeField] private float fireInterval = 2.2f;
 
-    private SpriteRenderer sr;
+    // 优先取视觉层精灵：EnemyVisual 会把精灵移到 Visual 子节点，
+    // 这里动态解析，避免缓存到被关掉的根节点 sr 导致闪白 / 染色看不见
+    private SpriteRenderer sr
+    {
+        get
+        {
+            EnemyVisual vis = GetComponent<EnemyVisual>();
+            if (vis != null && vis.LiveSprite != null) return vis.LiveSprite;
+            return cachedSr;
+        }
+    }
+    private SpriteRenderer cachedSr;
     private Collider2D col;
     private Color baseColor;
     private float fireTimer;
@@ -43,9 +64,9 @@ public class Enemy : MonoBehaviour
 
     private void Awake()
     {
-        sr = GetComponent<SpriteRenderer>();
+        cachedSr = GetComponent<SpriteRenderer>();
         col = GetComponent<Collider2D>();
-        if (sr != null) baseColor = sr.color;
+        if (cachedSr != null) baseColor = cachedSr.color;
     }
 
     // 所有随机参数都由 RunManager 的同一个 System.Random 传入，保证 seed 可复现
