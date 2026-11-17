@@ -46,9 +46,12 @@ public class Boss : MonoBehaviour
     private float hoverSeed;
     private bool alternate;
     private bool enraged;
-    private Vector3 enterFrom;
-    private Vector3 enterTo;
-    private float enterDuration;
+    // 视觉层参数（只影响 scale/颜色，不碰位置和碰撞开关）
+    private float breathe;             // 待机呼吸相位
+    private float flinch;              // 受击/阶段转换的短暂抖动，0~1
+    private float chargeTrailTimer;    // 冲撞残影节流
+    private float telegraphRingTimer;  // 蓄力光环节流
+    private bool roarDone;
 
     public int Hp { get { return hp; } }
     public int MaxHp { get { return maxHp; } }
@@ -73,6 +76,11 @@ public class Boss : MonoBehaviour
         enterDuration = Mathf.Max(0.2f, duration);
         baseY = to.y;
         hoverSeed = to.x * 1.7f;
+        this.breathe = 0f;
+        flinch = 0f;
+        chargeTrailTimer = 0f;
+        telegraphRingTimer = 0f;
+        roarDone = false;
 
         sr = GetComponent<SpriteRenderer>();
         col = GetComponent<Collider2D>();
@@ -84,7 +92,7 @@ public class Boss : MonoBehaviour
         stateDuration = enterDuration;
 
         transform.position = from;
-        transform.localScale = Vector3.one * BossEnterScale;
+        ApplyVisualScale(BossEnterScale);
         if (col != null) col.enabled = false;      // 入场时不可被打，也不撞人
     }
 
@@ -97,6 +105,7 @@ public class Boss : MonoBehaviour
         if (state == State.Dead) return;
 
         stateTimer -= Time.deltaTime;
+        flinch = Mathf.MoveTowards(flinch, 0f, Time.deltaTime * 5.5f);
 
         switch (state)
         {
@@ -108,18 +117,35 @@ public class Boss : MonoBehaviour
         }
     }
 
+    // 所有 scale 赋值都走这里：把"基准缩放"和"呼吸/受击抖动"叠加后再写根节点。
+    // Boss 的碰撞是手算半径（contactRadiusX/Y），不读 transform.localScale，
+    // 所以在这里做视觉形变不会造成判定错位。
+    private void ApplyVisualScale(float baseScale)
+    {
+        float breath = 1f + Mathf.Sin(Time.time * 2.1f + hoverSeed) * 0.035f;
+        float shake = flinch > 0f ? Mathf.Sin(Time.time * 45f) * flinch * 0.06f : 0f;
+        float s = baseScale * (breath + shake);
+        transform.localScale = new Vector3(s, s, 1f);
+    }
+
+    // 受击抖动：外部（Hit 回调）调用，0.18 秒内衰减完
+    public void Flinch()
+    {
+        flinch = 1f;
+    }
+
     // 入场：从上方落下 + 放大，三次缓出
     private void UpdateEnter()
     {
         float k = Mathf.Clamp01(1f - stateTimer / enterDuration);
         float ease = 1f - Mathf.Pow(1f - k, 3f);
         transform.position = Vector3.Lerp(enterFrom, enterTo, ease);
-        transform.localScale = Vector3.one * Mathf.Lerp(BossEnterScale, BossScale, ease);
+        ApplyVisualScale(Mathf.Lerp(BossEnterScale, BossScale, ease));
 
         if (k < 1f) return;
 
         transform.position = enterTo;
-        transform.localScale = Vector3.one * BossScale;
+        ApplyVisualScale(BossScale);
         if (col != null) col.enabled = true;
         HitParticles.Spawn(transform.position, CurrentColor, 10);
         EnterState(State.Idle, IdleTime);
@@ -128,26 +154,41 @@ public class Boss : MonoBehaviour
     private void UpdateIdle()
     {
         Drift();
+        ApplyVisualScale(BossScale);       // 待机呼吸（Boss 是所有单位里最"沉"的呼吸）
         if (stateTimer <= 0f) EnterState(State.Telegraph, TelegraphTime);
     }
 
     // 蓄力：变黄 + 轻微放大，给玩家反应时间（二阶段会缩短到 0.34 秒）
     private void UpdateTelegraph()
     {
+        float progress = 1f - Mathf.Clamp01(stateTimer / Mathf.Max(0.01f, stateDuration));
+
         if (sr != null)
         {
             bool blink = Mathf.Repeat(stateTimer * 12f, 1f) > 0.5f;
             // 有美术时只做淡黄闪烁，不用纯色盖掉原画
             sr.color = blink ? (hasArt ? new Color(1f, 0.86f, 0.55f) : TelegraphColor) : CurrentColor;
         }
-        float progress = 1f - Mathf.Clamp01(stateTimer / Mathf.Max(0.01f, stateDuration));
+
+        // 蓄力越接近尾声，脚下光环越亮越收紧——这是"倒计时"的第二条视觉线索，
+        // 颜色闪烁之外多一层形变，余光也能读到
+        if (progress > 0.35f && stateTimer > 0f)
+        {
+            telegraphRingTimer -= Time.deltaTime;
+            if (telegraphRingTimer <= 0f)
+            {
+                telegraphRingTimer = 0.12f;
+                FxRings.Land(transform.position, 0.3f + progress * 0.5f);
+            }
+        }
+
         float pulse = 1f + Mathf.Sin(progress * Mathf.PI) * 0.08f;
-        transform.localScale = Vector3.one * (BossScale * pulse);
+        ApplyVisualScale(BossScale * pulse);
 
         if (stateTimer > 0f) return;
 
         if (sr != null) sr.color = CurrentColor;
-        transform.localScale = Vector3.one * BossScale;
+        ApplyVisualScale(BossScale);
 
         // 交替出招：弹幕 → 冲撞 → 弹幕 …
         alternate = !alternate;
@@ -164,12 +205,20 @@ public class Boss : MonoBehaviour
 
     private void UpdateCharge()
     {
-        float dx = PlayerHealth.Instance.transform.position.x - transform.position.x;
-        float step = ChargeSpeed * Time.deltaTime;
+        float dx = PlayerHealth.Instance.transform.position.x - transform.position.x;        float step = ChargeSpeed * Time.deltaTime;
         float x = transform.position.x + Mathf.Sign(dx) * Mathf.Min(Mathf.Abs(dx), step);
         float limit = Mathf.Max(4f, RunManager.RoomRight - 0.9f);
         x = Mathf.Clamp(x, -limit, limit);
         transform.position = new Vector3(x, transform.position.y, transform.position.z);
+        ApplyVisualScale(BossScale * 1.08f);   // 冲撞时略微"撑开"，显得更有压迫感
+
+        // 高速冲撞留残影，和冲锋怪同一套语言，但boss 更大更慢，节流放宽到 0.1 秒
+        chargeTrailTimer -= Time.deltaTime;
+        if (chargeTrailTimer <= 0f)
+        {
+            chargeTrailTimer = 0.1f;
+            FxRings.AfterImage(transform.position, sr.sprite, sr.color, false);
+        }
 
         TryContactDamage();
 
@@ -180,6 +229,7 @@ public class Boss : MonoBehaviour
     private void UpdateRecover()
     {
         // 硬直期间不移动，给玩家反打窗口
+        ApplyVisualScale(BossScale * 0.96f);   // 微微收缩，明确"现在虚弱"的读数
         if (stateTimer <= 0f) EnterState(State.Idle, IdleTime);
     }
 
@@ -218,6 +268,8 @@ public class Boss : MonoBehaviour
 
         hp -= Mathf.Max(1, damage);
         StartCoroutine(FlashWhite());
+        Flinch();                       // 受击抖一下，大 Boss 也要有"被打到"的实感
+        HitParticles.Spawn(transform.position, CurrentColor, 3);
 
         if (hp <= 0)
         {
@@ -237,6 +289,8 @@ public class Boss : MonoBehaviour
         enraged = true;
         if (sr != null) sr.color = CurrentColor;
 
+        Flinch();
+        FxRings.Burst(transform.position, new Color(1f, 0.62f, 0.28f, 0.85f), 1.6f);
         HitParticles.Spawn(transform.position, new Color(1f, 0.78f, 0.32f, 1f), 20);
         HitFeedback.Play(HitFeedback.Feel.Kill);
         GameAudio.Play(GameAudio.Sfx.Wave);
@@ -256,6 +310,7 @@ public class Boss : MonoBehaviour
         state = State.Dead;
         hp = 0;
         if (col != null) col.enabled = false;
+        FxRings.Burst(transform.position, new Color(1f, 0.72f, 0.4f, 0.95f), 2.6f);
         HitFeedback.Play(HitFeedback.Feel.Kill);
         HitParticles.Spawn(transform.position, CurrentColor, 26);
         HitParticles.Spawn(transform.position, new Color(1f, 0.9f, 0.5f, 1f), 12);

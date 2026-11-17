@@ -44,6 +44,15 @@ public class FxRings : MonoBehaviour
         Spawn(pos, Kind.Ring, new Color(0.72f, 0.8f, 0.95f, 0.32f), 0.22f, 0.42f);
     }
 
+    // 空中爆发环：不压扁成正圆，用于 Boss 阶段转换 / 死亡
+    public static void Burst(Vector2 pos, Color tint, float size = 1.2f)
+    {
+        GameObject go = Spawn(pos, Kind.Flash, tint, 0.36f, size);
+        if (go == null) return;
+        FxRings fx = go.GetComponent<FxRings>();
+        fx.stretchX = 1f;              // 正圆，不是枪口那种拉长的火光
+    }
+
     // 枪口闪光：短促、亮，朝射击方向拉长成火光
     public static void Muzzle(Vector2 pos, Vector2 dir, Color tint)
     {

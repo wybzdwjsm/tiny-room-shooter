@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v1.3";
+    public const string BuildTag = "v1.4";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -186,6 +186,7 @@ public class RunManager : MonoBehaviour
         {
             cam.transform.position = new Vector3(0f, -0.8f, cam.transform.position.z);
             Backdrop.Ensure(cam);            // 程序生成的渐变背景，垫在所有对象后面
+            Ambience.Ensure(cam);            // 漂浮的尘埃 / 潮气泡泡，让静止的房间有呼吸
         }
 
         phase = Phase.Title;
