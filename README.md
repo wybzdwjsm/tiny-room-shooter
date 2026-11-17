@@ -1623,3 +1623,39 @@ Unity 不会导入，这是前面踩过的坑）。
 
 全脚本括号平衡；22 个 `case Attack.X` 一一对应 22 个 `A_X` 协程方法；
 无旧状态残留（State.Charge / UpdateRain 等已全部清除）。
+
+## W34：修复 Boss 贴图加载 + 酸雨重设计（v2.7）
+
+### bug：4 张专属 Boss 贴图全部加载失败
+
+现象：Console 报 `未找到 Resources/Art/boss_abyss / boss_spore / boss_spear / boss_tideeye`，
+Boss 全退回纯色方块——所以看起来"只是变色"。
+
+根因链条（两级坑）：
+1. **guid 格式错**：Unity（团结引擎 1.1.1）的 .meta guid 是 **56 字符**（42 字节 base64），
+   我第一次生成用了 `os.urandom(16)` → 24 字符，第二次改成 32 字节 → 44 字符，**都不对**。
+   对照已成功的 boss.png.meta 才发现是 56 字符，改成 `os.urandom(42)` 才对。
+2. **Unity 缓存了"资源不存在"**：即使改对 meta，编辑器可能仍不重新导入。
+   给 4 张 PNG 各插入一个 tEXt chunk（UnityImport 标记），强制文件变化触发重新导入。
+   重写后验证 IDAT 仍能正常解压、IEND 完整。
+
+另外：有专属贴图时不再叠 tint（原来把插画染成单色，也像是"只是变色"）。
+现在 `hasVariantArt` 为 true 时 sr.color = Color.white，显示贴图原色；
+只有原版 boss.png 兜底时才用 tint 区分。
+
+### 酸雨重设计：全屏随机 → 分区安全通道
+
+原来：每 0.22~0.32 秒随机 x 落一滴，全屏乱撒，几乎无处可躲。
+
+现在改成**分区酸雨**：
+- 房间横向分 **6 列**
+- 每波选 **1 列作安全通道**，用**绿色闪光**（FxRings.Burst）在地面标记 **0.7 秒预警**
+- 预警后其余 5 列各落 2~3 发密集酸雨；站进安全列完全不受伤
+- 共 3~4 波，安全列每波轮换（不会原地不动躲过全部）
+- 全程无敌（打不动），逼玩家走位而非硬拼
+
+### 教训
+
+Unity 的 .meta 手工生成极易出错：guid 长度、spriteID、textureType 任一不对都会导致
+资源加载失败。**最稳妥的是直接复制一个已成功的 .meta 再改 guid**，并用 shell 核对
+guid 长度与现有文件一致（这次就是靠 `grep guid | wc` 发现的 56 vs 24）。

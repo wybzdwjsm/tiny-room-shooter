@@ -105,15 +105,20 @@ public class Boss : MonoBehaviour
     private static readonly Color EnragedColor = new Color(1f, 0.22f, 0.30f, 1f);
 
     private bool hasArt;
+    private bool hasVariantArt;      // 是否加载到了专属贴图（而非原版 boss.png 兜底）
     private Color CurrentColor
     {
         get
         {
             Color tint = spec.tint;
-            // 有美术时：把 tint 乘到原画上（保留插画细节），狂暴再偏红一点
+            // 有专属贴图：用白色显示贴图原色，不再叠 tint（否则会把插画染成单色，
+            // 用户会觉得"只是变色"）。狂暴时轻微偏红作为二阶段提示。
+            if (hasVariantArt)
+                return enraged ? new Color(1f, 0.78f, 0.78f) : Color.white;
+            // 只有原版 boss.png 兜底：靠 tint 区分不同 Boss
             if (hasArt)
                 return enraged ? new Color(tint.r, tint.g * 0.55f, tint.b * 0.55f) : tint;
-            // 没图时退回纯色方块表现
+            // 完全没图：纯色方块表现
             return enraged ? EnragedColor : Color.Lerp(BaseColor, tint, 0.5f);
         }
     }
@@ -181,6 +186,8 @@ public class Boss : MonoBehaviour
         col = GetComponent<Collider2D>();
         // 有美术 = 当前贴图是 ArtStore 里加载的任意一张（原版或 4 种变体之一）
         hasArt = sr != null && sr.sprite != null && ArtStore.IsBossSprite(sr.sprite);
+        // 专属贴图 = 不是原版 boss.png（有专属图就不叠 tint，显示原色）
+        hasVariantArt = hasArt && sr.sprite != ArtStore.Boss;
         if (sr != null) sr.color = CurrentColor;
 
         state = State.Enter;
@@ -465,24 +472,65 @@ public class Boss : MonoBehaviour
         yield return FinishAttack(s, RecoverBurst);
     }
 
-    // 无敌酸雨
+    // 无敌酸雨（分区版）：房间分 6 列，每波留 1 列安全通道（绿光标记预警），
+    // 预警 0.7 秒后其余列落下密集酸雨。玩家只要站进安全列就完全不受伤。
     private System.Collections.IEnumerator A_Rain(int s)
     {
         invincible = true;
         GameAudio.Play(GameAudio.Sfx.Wave);
-        float dur = enraged ? 3.2f : 2.6f;
-        float t = 0f, tick = 0f;
-        while (t < dur)
+        const int cols = 6;
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 1.4f);
+        float colW = (limit * 2f) / cols;
+        int waves = enraged ? 4 : 3;
+        int lastSafe = -1;
+
+        for (int w = 0; w < waves; w++)
         {
             if (s != attackSerial || state == State.Dead) yield break;
-            if (!PauseMenu.IsPaused && !RunManager.IsSpawning)
+
+            // 选安全列：和上一波不同，避免玩家原地不动就能躲过所有波
+            int safeCol = (int)(rainRandom() * cols) % cols;
+            if (safeCol == lastSafe) safeCol = (safeCol + 1 + (int)(rainRandom() * (cols - 1))) % cols;
+            lastSafe = safeCol;
+            float safeX = -limit + colW * (safeCol + 0.5f);
+
+            // —— 预警阶段 0.7 秒：安全列画绿色地面光环，Boss 变紫 ——
+            float warn = 0f, markerTimer = 0f;
+            while (warn < 0.7f)
             {
-                if (sr != null) sr.color = Color.Lerp(CurrentColor, new Color(0.8f, 0.4f, 1f), 0.5f + Mathf.Sin(Time.time * 14f) * 0.3f);
-                tick -= Time.deltaTime;
-                if (tick <= 0f) { tick = enraged ? 0.22f : 0.32f; EmitSkyRain(1, "酸雨", false); }
-                t += Time.deltaTime;
+                if (s != attackSerial || state == State.Dead) yield break;
+                if (!PauseMenu.IsPaused && !RunManager.IsSpawning)
+                {
+                    if (sr != null) sr.color = Color.Lerp(CurrentColor, new Color(0.8f, 0.4f, 1f),
+                        0.5f + Mathf.Sin(Time.time * 14f) * 0.3f);
+                    // 绿色闪光标记"这一列是安全的"，节流避免刷屏
+                    markerTimer -= Time.deltaTime;
+                    if (markerTimer <= 0f)
+                    {
+                        markerTimer = 0.16f;
+                        FxRings.Burst(new Vector2(safeX, -3.4f), new Color(0.35f, 1f, 0.5f, 0.85f), 0.9f);
+                    }
+                    warn += Time.deltaTime;
+                }
+                yield return null;
             }
-            yield return null;
+
+            // —— 落雨：除了安全列，其余每列下 2~3 发（不同高度错开）——
+            for (int c = 0; c < cols; c++)
+            {
+                if (c == safeCol) continue;
+                float x = -limit + colW * (c + 0.5f);
+                int drops = enraged ? 3 : 2;
+                for (int d = 0; d < drops; d++)
+                {
+                    float jitter = (float)(rainRandom() - 0.5) * colW * 0.5f;
+                    ShootFrom(new Vector2(x + jitter, 7f), Vector2.down, "酸雨");
+                }
+            }
+            GameAudio.Play(GameAudio.Sfx.Shoot);
+
+            // 波间隔，让酸雨落下并留出反应时间
+            yield return WaitGameplay(enraged ? 0.75f : 0.9f, s);
         }
         yield return FinishAttack(s, RecoverBurst);
     }
