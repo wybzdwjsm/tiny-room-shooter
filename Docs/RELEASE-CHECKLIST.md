@@ -15,9 +15,12 @@
 
 ## 还差什么
 
-### 一、itch.io 上传（主要缺口，需要你本人登录）
+### 一、itch.io 上传（需梯子 + 账号登录，可延后）
 
-itch.io 需要账号登录，无法由 Agent 代操作。步骤：
+当前网络环境无法访问 itch.io，这一步可以放一放——**GitHub Release 已经是可用的发布渠道**，
+`v2.9` 的 zip 可直接下载试玩。将来网络允许时再补：
+
+1. itch.io 需要账号登录，无法由 Agent 代操作。步骤：
 
 1. https://itch.io → Log in → 头像 → **Create new project**
 2. 文案从 `ITCH-PAGE.md` 复制：标题「守灯人 / The Lamplighter」、短描述、分类 Game / Action+Shooter、标签那串直接贴；
