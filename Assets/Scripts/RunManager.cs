@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v2.2";
+    public const string BuildTag = "v2.3";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -698,19 +698,22 @@ public class RunManager : MonoBehaviour
 
         for (int i = 0; i < count; i++)
         {
-            // 每块平台占用一个等宽槽位：宽度只占槽位的 55%~73%，
-            // 所以无论随机怎么摇，相邻两块之间一定留得下一条能站人的缝。
-            float w = Mathf.Clamp(slot * (0.55f + (float)rng.NextDouble() * 0.18f), 1.5f, 2.8f);
+            // 每块平台占槽位 78%~88%（原来 55%~73%，缝隙太大显得"覆盖不到"）。
+            // 仍留 12%~22% 的缝，玩家能穿下去，不会连成一整条挡路的墙。
+            // 宽度上限从 2.8 提到 4.2：count 少时槽位宽，不提高上限覆盖率会被卡到只有 62%。
+            float w = Mathf.Clamp(slot * (0.78f + (float)rng.NextDouble() * 0.10f), 1.8f, 4.2f);
 
             float baseX = left + slot * (i + 0.5f);
             float jitterRange = Mathf.Max(0f, (slot - w) * 0.5f);
             float x = baseX + (float)(rng.NextDouble() - 0.5) * jitterRange * 0.8f;
             x = Mathf.Clamp(x, left + w * 0.5f, right - w * 0.5f);
 
-            // 高低交替：相邻两块不会同高，跳起来有节奏，也不会连成一条挡路的"墙"。
-            // 两个高度差 1.1，远小于跳跃高度 3.2；高台顶面离地 2.55，起跳后还有约 0.5 的余量。
-            bool high = (i % 2) == 1;
-            float y = FloorTop + (high ? 2.55f : 1.45f) + (float)(rng.NextDouble() - 0.5) * 0.18f;
+            // 三条高度带循环（低/中/高），垂直方向也铺开，全场各处都有落脚点；
+            // 相邻两块差 0.9，高台顶面离地 3.0，仍在满跳高度 3.6 内（滞空 1.42s 更从容）。
+            // 高度带按 i%3 循环而不是奇偶，避免"高低高低"形成一条可预料的阶梯墙。
+            int band = i % 3;
+            float lift = band == 0 ? 1.25f : (band == 1 ? 2.15f : 3.0f);
+            float y = FloorTop + lift + (float)(rng.NextDouble() - 0.5) * 0.16f;
 
             MakePlatform("Float_" + i, new Vector2(x, y), w, 0.34f,
                 new Color(0.28f, 0.36f, 0.5f, 1f), floatPlatforms);
