@@ -470,15 +470,17 @@ public class Boss : MonoBehaviour
         yield return FinishAttack(s, RecoverBurst);
     }
 
-    // 无敌酸雨（分区版）：房间分 6 列，每波留 1 列安全通道（绿光标记预警），
-    // 预警 0.7 秒后其余列落下密集酸雨。玩家只要站进安全列就完全不受伤。
+    // 无敌酸雨（全屏版）：整条屏幕宽度密集落雨，只有一个安全点能站人。
+    // 安全点用醒目的绿色光柱标记 0.8 秒预警，玩家必须跑到那一点才能躲。
+    // 安全点每波轮换，逼玩家持续移动，压迫感强但始终有唯一解。
     private System.Collections.IEnumerator A_Rain(int s)
     {
         invincible = true;
         GameAudio.Play(GameAudio.Sfx.Wave);
-        const int cols = 6;
-        float limit = Mathf.Max(3f, RunManager.RoomRight - 1.4f);
-        float colW = (limit * 2f) / cols;
+        const int columns = 18;                 // 全屏 18 列，密集到几乎无缝（控制数量避免 WebGL GC 尖峰）
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
+        float colW = (limit * 2f) / columns;
+        const float safeWidth = 1.6f;           // 安全点宽度：只够站一个人
         int waves = enraged ? 4 : 3;
         int lastSafe = -1;
 
@@ -486,44 +488,47 @@ public class Boss : MonoBehaviour
         {
             if (s != attackSerial || state == State.Dead) yield break;
 
-            // 选安全列：和上一波不同，避免玩家原地不动就能躲过所有波
-            int safeCol = (int)(rainRandom() * cols) % cols;
-            if (safeCol == lastSafe) safeCol = (safeCol + 1 + (int)(rainRandom() * (cols - 1))) % cols;
+            // 选安全点：和上一波拉开距离，逼玩家横跨屏幕
+            int safeCol;
+            int tries = 0;
+            do
+            {
+                safeCol = (int)(rainRandom() * columns) % columns;
+                tries++;
+            } while (lastSafe >= 0 && Mathf.Abs(safeCol - lastSafe) < columns / 3 && tries < 12);
             lastSafe = safeCol;
             float safeX = -limit + colW * (safeCol + 0.5f);
 
-            // —— 预警阶段 0.7 秒：安全列画绿色地面光环，Boss 变紫 ——
+            // —— 预警 0.8 秒：绿色光柱标记唯一安全点 ——
             float warn = 0f, markerTimer = 0f;
-            while (warn < 0.7f)
+            while (warn < 0.8f)
             {
                 if (s != attackSerial || state == State.Dead) yield break;
                 if (!PauseMenu.IsPaused && !RunManager.IsSpawning)
                 {
                     if (sr != null) sr.color = Color.Lerp(CurrentColor, new Color(0.8f, 0.4f, 1f),
                         0.5f + Mathf.Sin(Time.time * 14f) * 0.3f);
-                    // 绿色闪光标记"这一列是安全的"，节流避免刷屏
                     markerTimer -= Time.deltaTime;
                     if (markerTimer <= 0f)
                     {
-                        markerTimer = 0.16f;
-                        FxRings.Burst(new Vector2(safeX, -3.4f), new Color(0.35f, 1f, 0.5f, 0.85f), 0.9f);
+                        markerTimer = 0.12f;
+                        // 地面绿圈 + 上空绿光，明确指出"站这里"
+                        FxRings.Burst(new Vector2(safeX, -3.4f), new Color(0.3f, 1f, 0.45f, 0.95f), 1.1f);
+                        FxRings.Burst(new Vector2(safeX, 0f), new Color(0.3f, 1f, 0.45f, 0.5f), 0.7f);
                     }
                     warn += Time.deltaTime;
                 }
                 yield return null;
             }
 
-            // —— 落雨：除了安全列，其余每列下 2~3 发（不同高度错开）——
-            for (int c = 0; c < cols; c++)
+            // —— 全屏落雨：除安全点覆盖的列外，每一列都下 ——
+            for (int c = 0; c < columns; c++)
             {
-                if (c == safeCol) continue;
                 float x = -limit + colW * (c + 0.5f);
-                int drops = enraged ? 3 : 2;
-                for (int d = 0; d < drops; d++)
-                {
-                    float jitter = (float)(rainRandom() - 0.5) * colW * 0.5f;
-                    ShootFrom(new Vector2(x + jitter, 7f), Vector2.down, "酸雨");
-                }
+                if (Mathf.Abs(x - safeX) < safeWidth * 0.5f) continue;   // 唯一安全点
+                // 每列 2 发错开高度，形成连续弹幕
+                ShootFrom(new Vector2(x, 7f), Vector2.down, "酸雨");
+                ShootFrom(new Vector2(x, 4.5f), Vector2.down, "酸雨");
             }
             GameAudio.Play(GameAudio.Sfx.Shoot);
 

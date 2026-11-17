@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v2.8";
+    public const string BuildTag = "v2.9";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -517,8 +517,8 @@ public class RunManager : MonoBehaviour
         go.AddComponent<BoxCollider2D>();
 
         Boss boss = go.AddComponent<Boss>();
-        // 血量按 bossIndex 递增（不是按类型），保证后期 Boss 更耐打
-        int hp = 30 + bossIndex * 12 + Mathf.RoundToInt(stats.enemyHpBonus) * 3;
+        // 血量按 bossIndex 递增（不是按类型），整体 ×3 让 Boss 战更有分量
+        int hp = (30 + bossIndex * 12 + Mathf.RoundToInt(stats.enemyHpBonus) * 3) * 3;
         boss.Init(hp, 1.6f, from, to, kind);
         Debug.Log("[RunManager] 生成 Boss #" + (bossIndex + 1) + " 类型=" + boss.TypeName + " hp=" + hp);
 

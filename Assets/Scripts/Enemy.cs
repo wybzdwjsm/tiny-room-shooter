@@ -62,6 +62,9 @@ public class Enemy : MonoBehaviour
 
     private float hitFlashUntil;     // 受击闪白期间不被开火预警色覆盖
     private float damageCarry;       // 未满 1 点的零散伤害（子弹 0.25，攒够 4 发才扣 1 血）
+    private float aliveTime;         // 入场完成后的存活时长，用于"卡住自愈"
+    private const float StuckTimeout = 30f;      // 存活超过 30 秒（正常早被打死，这是死锁保险）
+    private const float StuckDistance = 11f;     // 且离玩家超过 11 单位（几乎全场宽度，确实够不着）
 
     private void Awake()
     {
@@ -76,6 +79,7 @@ public class Enemy : MonoBehaviour
         hp = hpValue;
         fireInterval = interval;
         fireTimer = firstShotDelay;
+        aliveTime = 0f;
         if (sr != null) { sr.color = color; baseColor = color; }
 
         // 由射速推断射手类型的速度：快速怪最快、精英最慢；冲锋 / 炮台单独指定
@@ -113,6 +117,47 @@ public class Enemy : MonoBehaviour
         if (!RunManager.HasInstance || !RunManager.IsPlaying) return;
         if (PauseMenu.IsPaused) return;
         if (!PlayerHealth.HasInstance || PlayerHealth.Instance.IsDead) return;
+
+        // 卡住自愈：敌人入场完成后开始计时，若存活过久且远离玩家（说明卡在够不着的地方 /
+        // 掉出场地 / 被平台缝隙困住），自动爆掉并计入击杀，避免"剩余1但找不到"把玩家锁死。
+        // 正常战斗里敌人早就被打死了，这个只在异常情况下触发。
+        if (introTime >= introTotal && !RunManager.IsSpawning)
+        {
+            aliveTime += Time.deltaTime;
+            if (aliveTime > StuckTimeout)
+            {
+                float dist = Vector2.Distance(transform.position, PlayerHealth.Instance.transform.position);
+                if (dist > StuckDistance)
+                {
+                    Debug.LogWarning("[Enemy] " + TypeName + " 存活超过 " + StuckTimeout
+                        + "s 且距离玩家 " + dist.ToString("0.0") + "，判定卡住并自毁");
+                    // 走和正常击杀一样的死亡流程
+                    dying = true; dieTime = 0f;
+                    dieBaseScale = transform.localScale; dieColor = baseColor;
+                    if (col != null) col.enabled = false;
+                    HitParticles.Spawn(transform.position, baseColor, 8);
+                    if (RunManager.HasInstance) RunManager.Instance.NotifyKill(this);
+                    Destroy(gameObject, DeathDuration + 0.2f);
+                    return;
+                }
+            }
+        }
+
+        // 入场完成后，兜底把跑出房间的敌人拉回来（防止卡在墙外永远打不到）。
+        // 必须限定 !IsSpawning：否则入场起点本来就在墙外，会被误判拉回、破坏入场动画。
+        if (introTime >= introTotal && !RunManager.IsSpawning && RunManager.HasInstance)
+        {
+            float lim = Mathf.Max(3f, RunManager.RoomRight - 0.5f);
+            if (transform.position.x < -lim || transform.position.x > lim
+                || transform.position.y < -8f || transform.position.y > 12f)
+            {
+                transform.position = new Vector3(
+                    Mathf.Clamp(transform.position.x, -lim + 1f, lim - 1f),
+                    Mathf.Max(-2f, Mathf.Min(2f, transform.position.y)),
+                    transform.position.z);
+                Debug.LogWarning("[Enemy] " + TypeName + " 跑出场地，已拉回场内");
+            }
+        }
 
         if (introDelay > 0f) { introDelay -= Time.deltaTime; return; }
         if (introTime < introTotal) { UpdateIntro(); return; }
