@@ -1720,3 +1720,20 @@ meta 行尾，都不是全部根因——团结引擎的 Resources 导入在外�
 ### 静态验证
 
 全脚本括号平衡、所有行尾 LF、API 引用完整。
+
+## W35b：内联 BossArt 修复 CS0103（v2.8 续）
+
+上一版新建 `BossArt.cs` 又踩了同一个坑：**团结引擎不识别外部新建的 .cs 文件**，
+编译报 `CS0103: The name 'BossArt' does not exist in the current context`，
+编辑器无法进 Play 模式。
+
+修复：**不新建文件**——把 `BossArt` 整个类内联进已能编译的 `ArtStore.cs`
+（C# 允许一个文件多个类），删掉独立的 `BossArt.cs` 和它的 meta。
+零新文件 = 零导入问题，保证编译通过。
+
+顺手清掉两个 CS0414 警告（字段赋值但从未使用）：
+- `Boss.actionTimer`（协程重构后不再需要）
+- `Boss.alternate`（改成攻击池轮转后就废弃了）
+
+**项目约定（重要）**：这个团结引擎工程里，**新建文件（.cs 或 .png）反复出现导入失败**。
+以后加功能优先内联到已有脚本，或让用户手动在编辑器里 Assets → Refresh。

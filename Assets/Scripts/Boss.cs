@@ -134,7 +134,6 @@ public class Boss : MonoBehaviour
     private float stateDuration = 1f;      // 进入状态时的总时长，蓄力脉冲要用它算进度
     private float baseY;
     private float hoverSeed;
-    private bool alternate;
     private bool enraged;
     private Vector3 enterFrom;         // 入场起点 / 终点 / 时长（v1.4 曾误删，导致 CS0103）
     private Vector3 enterTo;
@@ -145,7 +144,6 @@ public class Boss : MonoBehaviour
     private float telegraphRingTimer;  // 蓄力光环节流
     private int attackCursor;          // 当前攻击池轮转到的位置
     private Attack pendingAttack;      // 蓄力结束后要执行的招式
-    private float actionTimer;         // 大招内部计时（酸雨间隔 / 激光持续）
     private float laserY;              // 激光锁定的高度
     private bool invincible;           // 无敌（酸雨/毒雾阶段，打不动）
     private System.Collections.IEnumerator attackRoutine;   // 当前攻击协程
@@ -179,7 +177,6 @@ public class Boss : MonoBehaviour
         chargeTrailTimer = 0f;
         telegraphRingTimer = 0f;
         attackCursor = 0;
-        actionTimer = 0f;
         invincible = false;
 
         sr = GetComponent<SpriteRenderer>();
