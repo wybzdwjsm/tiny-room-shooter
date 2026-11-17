@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v2.5";
+    public const string BuildTag = "v2.6";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -472,9 +472,9 @@ public class RunManager : MonoBehaviour
     // 每一波的开场：重生成悬浮平台 → 挑随机出生点 → 传送 → 冻结操作刷怪 → 全部落地后恢复
     private void StartWave()
     {
-        // Boss 战清空所有悬浮平台：让场地变成一块空地，玩家能靠跳跃 / 走位躲弹幕和冲撞，
-        // 平台在 Boss 战反而会挡子弹、卡住走位。Boss 死后下一波会重新生成。
-        if (IsBossWave) ClearFloats();
+        // Boss 战：不铺满平台，只生成 2~3 块高处小平台当作躲避/输出点，
+        // 下层保持空旷便于走位；普通波才用 RebuildFloats 铺开。
+        if (IsBossWave) RebuildBossFloats();
         else RebuildFloats();
 
         Vector3 spawn = PickSpawnPoint();
@@ -682,6 +682,32 @@ public class RunManager : MonoBehaviour
         foreach (GameObject go in floatPlatforms)
             if (go != null) Destroy(go);
         floatPlatforms.Clear();
+    }
+
+    // Boss 战专属平台：数量少（2~3 块）、位置高、宽度小，不占屏幕。
+    // 给玩家一个"跳上去躲地面弹幕 / 从高处输出"的选择，但不至于把场地堆满。
+    private void RebuildBossFloats()
+    {
+        ClearFloats();
+
+        float left = boundLeft + 2f;
+        float right = boundRight - 2f;
+        float span = Mathf.Max(6f, right - left);
+
+        int count = 2 + rng.Next(2);          // 2~3 块
+        for (int i = 0; i < count; i++)
+        {
+            // 宽度只有 1.4~2.0（普通波平台可达 3.6），明显是"小平台"
+            float w = 1.4f + (float)rng.NextDouble() * 0.6f;
+            // x 均匀分布在房间里，但留边缘；高度固定在高层 2.9~3.2（贴近满跳 3.4）
+            float x = Mathf.Lerp(left, right, (i + 0.5f) / count)
+                + (float)(rng.NextDouble() - 0.5) * 1.2f;
+            x = Mathf.Clamp(x, left + w * 0.5f, right - w * 0.5f);
+            float y = FloorTop + 2.9f + (float)rng.NextDouble() * 0.3f;
+
+            MakePlatform("BossFloat_" + i, new Vector2(x, y), w, 0.3f,
+                new Color(0.42f, 0.32f, 0.48f, 1f), floatPlatforms);   // 偏紫，和普通平台区分
+        }
     }
 
     // 悬浮平台：每个小关卡重新生成。

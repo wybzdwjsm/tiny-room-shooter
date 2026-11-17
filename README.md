@@ -1580,3 +1580,46 @@ Unity 不会导入，这是前面踩过的坑）。
 `ArtStore` 新增 `BossFor(kindIndex)` 按类型取图，缺图自动退回原版 boss.png；
 `Boss.Init` 用 `ArtStore.IsBossSprite()` 判断是否走"有图染色"分支，
 避免专属贴图被当成兜底方块、用纯色盖掉插画细节。
+
+## W33：22 种 Boss 攻击 + Boss 战专属小平台（v2.6）
+
+### 架构重构：从"每招一个状态"到"协程 + 发射原语"
+
+原来每加一招就要加一个 State 枚举 + 一个 Update 方法，22 招会变成 22 套状态机，
+代码膨胀到上千行且改一处要改多遍。这次重构成：
+
+- **状态机只保留 6 个状态**（Enter / Idle / Telegraph / Attacking / Recover / Dead）；
+- 所有攻击统一走 `RunAttack` 协程（`A_Fan` / `A_Spiral` … 共 22 个协程）；
+- 提炼 4 个发射原语：`EmitFan`（扇形）/ `EmitRing`（环形）/ `EmitSkyRain`（天降）/ `Shoot`+`ShootFrom`；
+- 招式之间只是"调哪个原语 + 什么时序"的差异，不再有重复状态机代码。
+
+关键机制：
+- `attackSerial` 攻击序号：重开 / Boss 死亡时 ++，旧协程靠 `if (serial != attackSerial) yield break` 自动失效，
+  不会在 Boss 死后还在发弹；
+- `WaitGameplay(seconds, serial)`：只在游戏真正进行时推进计时（暂停 / 进场冻结），协程不会在暂停时偷跑；
+- `FinishAttack` 统一收招回 Recover，并恢复 Boss 颜色（酸雨/激光的变色不会残留）。
+
+### 22 种攻击（每种 Boss 至少 5 个）
+
+| Boss | 招式 |
+| --- | --- |
+| 潮眼 TideEye | 扇形、冲撞、全屏弹幕墙、螺旋、追踪水弹、散弹爆发、泪雨（7） |
+| 孢潮 Spore | 环形、无敌酸雨、孢子云、交叉散射、双螺旋、地雷孢子、毒雾扩散（7） |
+| 裂鳍 Spear | 大激光、冲撞、扇形、五连点射、回头弹、疾风三连冲、十字激光（7） |
+| 深渊 Abyss | 双扇、弹幕墙、激光、酸雨、冲撞、螺旋环、陨石雨、追踪群、全屏十字（9） |
+
+每种 Boss 用 `AttackPools` 轮转出招，所以打一场能看到该 Boss 的全部招式。
+深渊作为最终 Boss 会 9 招全用。
+
+### Boss 战专属小平台
+
+之前 Boss 战完全清空平台，场地太空。改成 `RebuildBossFloats()`：
+- 只生成 **2~3 块**小平台（普通波是 4~6 块）；
+- 宽度只有 1.4~2.0（普通波可达 3.6）——不占屏幕；
+- 高度固定在 **2.9~3.2**（贴近满跳 3.4，需要精准跳），下层保持空旷；
+- 偏紫色，和普通平台视觉区分。
+
+### 静态验证
+
+全脚本括号平衡；22 个 `case Attack.X` 一一对应 22 个 `A_X` 协程方法；
+无旧状态残留（State.Charge / UpdateRain 等已全部清除）。

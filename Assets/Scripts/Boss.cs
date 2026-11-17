@@ -53,21 +53,39 @@ public class Boss : MonoBehaviour
     public Kind Type { get { return kind; } }
     public string TypeName { get { return spec.name; } }
 
-    private enum State { Enter, Idle, Telegraph, Burst, Charge, Recover, Dead,
-        InvincibleRain, LaserCharge, LaserFire, WallBarrage }
-    private enum Attack { Fan, Charge, Rain, Laser, Wall }
+    private enum State { Enter, Idle, Telegraph, Attacking, Recover, Dead }
 
-    // 每种 Boss 的攻击池（轮转使用）。原版只会扇形/冲撞，新 Boss 有专属大招。
+    // 全部攻击方式。执行统一走 RunAttack 协程 + 下面的发射原语，
+    // 不再为每一招单独加 State —— 否则 22 招就是 22 套 Update，维护会崩。
+    private enum Attack
+    {
+        // 基础
+        Fan, Charge, Rain, Laser, Wall,
+        // 潮眼（水/眼）
+        Spiral, Homing, Burst, TearRain,
+        // 孢潮（孢子/毒）
+        SporeCloud, Cross, TwinSpiral, Mine, PoisonMist,
+        // 裂鳍（速度/激光）
+        QuickShot, Backshot, Gale, CrossLaser,
+        // 深渊（终极）
+        RingSpiral, Meteor, SeekerSwarm, CrossFire,
+    }
+
+    // 每种 Boss 的攻击池（轮转使用）。每个至少 7 招。
     private static readonly Attack[][] AttackPools =
     {
-        // TideEye 潮眼：原版两招 + 全屏弹幕
-        new[] { Attack.Fan, Attack.Charge, Attack.Wall, Attack.Fan, Attack.Charge },
-        // Spore 孢潮：环形 + 酸雨（"孢潮"从天上撒孢子）
-        new[] { Attack.Fan, Attack.Rain, Attack.Wall, Attack.Fan, Attack.Rain },
-        // Spear 裂鳍：高频冲撞 + 激光
-        new[] { Attack.Charge, Attack.Laser, Attack.Fan, Attack.Charge, Attack.Laser },
-        // Abyss 深渊之瞳：全部招式都会
-        new[] { Attack.Fan, Attack.Wall, Attack.Laser, Attack.Rain, Attack.Charge },
+        // TideEye 潮眼：水/眼 —— 扇形、冲撞、水幕、螺旋、追踪、散爆、泪雨
+        new[] { Attack.Fan, Attack.Charge, Attack.Wall, Attack.Spiral,
+                Attack.Homing, Attack.Burst, Attack.TearRain },
+        // Spore 孢潮：孢子/毒 —— 环形、酸雨、孢子云、交叉、双螺旋、地雷、毒雾
+        new[] { Attack.Fan, Attack.Rain, Attack.SporeCloud, Attack.Cross,
+                Attack.TwinSpiral, Attack.Mine, Attack.PoisonMist },
+        // Spear 裂鳍：速度/激光 —— 激光、冲撞、扇形、点射、回头弹、疾风、十字激光
+        new[] { Attack.Laser, Attack.Charge, Attack.Fan, Attack.QuickShot,
+                Attack.Backshot, Attack.Gale, Attack.CrossLaser },
+        // Abyss 深渊之瞳：终极，全招式 —— 双扇、弹幕、激光、酸雨、冲撞、螺旋环、陨石、追踪群、十字
+        new[] { Attack.Fan, Attack.Wall, Attack.Laser, Attack.Rain, Attack.Charge,
+                Attack.RingSpiral, Attack.Meteor, Attack.SeekerSwarm, Attack.CrossFire },
     };
 
     [SerializeField] private float driftSpeed = 1.1f;
@@ -124,7 +142,9 @@ public class Boss : MonoBehaviour
     private Attack pendingAttack;      // 蓄力结束后要执行的招式
     private float actionTimer;         // 大招内部计时（酸雨间隔 / 激光持续）
     private float laserY;              // 激光锁定的高度
-    private bool invincible;           // 酸雨阶段无敌（打不动）
+    private bool invincible;           // 无敌（酸雨/毒雾阶段，打不动）
+    private System.Collections.IEnumerator attackRoutine;   // 当前攻击协程
+    private int attackSerial;          // 攻击序号，重开/死亡时让旧协程失效
 
     public int Hp { get { return hp; } }
     public int MaxHp { get { return maxHp; } }
@@ -188,13 +208,17 @@ public class Boss : MonoBehaviour
             case State.Enter: UpdateEnter(); break;
             case State.Idle: UpdateIdle(); break;
             case State.Telegraph: UpdateTelegraph(); break;
-            case State.Charge: UpdateCharge(); break;
+            case State.Attacking: UpdateAttacking(); break;
             case State.Recover: UpdateRecover(); break;
-            case State.InvincibleRain: UpdateRain(); break;
-            case State.LaserCharge: UpdateLaserCharge(); break;
-            case State.LaserFire: UpdateLaserFire(); break;
-            case State.WallBarrage: UpdateWallBarrage(); break;
         }
+    }
+
+    // 攻击期间 Boss 的行为由协程控制（发射时机/移动），这里只管视觉和收尾检测。
+    // 协程跑完会把 state 切回 Recover；用 serial 防止重开后旧协程还在动。
+    private void UpdateAttacking()
+    {
+        DriftSlower();                  // 攻击时缓慢漂移，不是定桩
+        if (sr != null && !invincible) sr.color = CurrentColor;
     }
 
     // 所有 scale 赋值都走这里：把"基准缩放"和"呼吸/受击抖动"叠加后再写根节点。
@@ -278,94 +302,111 @@ public class Boss : MonoBehaviour
         ExecuteAttack(pendingAttack);
     }
 
-    // 蓄力结束后进入对应招式的执行状态
+    // 蓄力结束后启动对应攻击的协程。所有攻击共用一个 Attacking 状态。
     private void ExecuteAttack(Attack atk)
+    {
+        attackSerial++;
+        invincible = false;
+        attackRoutine = RunAttack(atk, attackSerial);
+        StartCoroutine(attackRoutine);
+        EnterState(State.Attacking, 99f);   // 时长由协程控制，这里给个大值兜底
+    }
+
+    // 等待若干秒，但只在"游戏真正进行中"才推进（暂停 / 进场时不推进，且能被重开打断）
+    private System.Collections.IEnumerator WaitGameplay(float seconds, int serial)
+    {
+        float t = 0f;
+        while (t < seconds)
+        {
+            if (serial != attackSerial || state == State.Dead) yield break;
+            if (!PauseMenu.IsPaused && !RunManager.IsSpawning && RunManager.IsPlaying)
+                t += Time.deltaTime;
+            yield return null;
+        }
+    }
+
+    // 一路等到 Recover：让协程在收招时统一交还控制权
+    private System.Collections.IEnumerator FinishAttack(int serial, float recoverTime)
+    {
+        invincible = false;
+        if (sr != null) sr.color = CurrentColor;
+        if (serial != attackSerial || state == State.Dead) yield break;
+        EnterState(State.Recover, recoverTime);
+    }
+
+    // ==================== 攻击总调度 ====================
+    private System.Collections.IEnumerator RunAttack(Attack atk, int serial)
     {
         switch (atk)
         {
-            case Attack.Fan:
-                FireFan();
-                EnterState(State.Recover, RecoverBurst);
-                break;
-            case Attack.Charge:
-                EnterState(State.Charge, enraged ? 0.7f : 0.85f);
-                break;
-            case Attack.Rain:
-                // 酸雨：先进入无敌，Boss 悬停不动开始下酸雨
-                invincible = true;
-                actionTimer = 0f;
-                EnterState(State.InvincibleRain, enraged ? 3.2f : 2.6f);
-                GameAudio.Play(GameAudio.Sfx.Wave);
-                break;
-            case Attack.Laser:
-                // 激光：锁定玩家当前高度，长蓄力后射出
-                laserY = PlayerHealth.Instance.transform.position.y;
-                actionTimer = 0f;
-                EnterState(State.LaserCharge, enraged ? 1.1f : 1.5f);
-                break;
-            case Attack.Wall:
-                // 全屏弹幕墙：一次性铺满留缝
-                FireWall();
-                EnterState(State.WallBarrage, 0.5f);
-                break;
+            case Attack.Fan:        yield return A_Fan(serial); break;
+            case Attack.Charge:     yield return A_Charge(serial); break;
+            case Attack.Wall:       yield return A_Wall(serial); break;
+            case Attack.Rain:       yield return A_Rain(serial); break;
+            case Attack.Laser:      yield return A_Laser(serial); break;
+            case Attack.Spiral:     yield return A_Spiral(serial); break;
+            case Attack.Homing:     yield return A_Homing(serial); break;
+            case Attack.Burst:      yield return A_Burst(serial); break;
+            case Attack.TearRain:   yield return A_TearRain(serial); break;
+            case Attack.SporeCloud: yield return A_SporeCloud(serial); break;
+            case Attack.Cross:      yield return A_Cross(serial); break;
+            case Attack.TwinSpiral: yield return A_TwinSpiral(serial); break;
+            case Attack.Mine:       yield return A_Mine(serial); break;
+            case Attack.PoisonMist: yield return A_PoisonMist(serial); break;
+            case Attack.QuickShot:  yield return A_QuickShot(serial); break;
+            case Attack.Backshot:   yield return A_Backshot(serial); break;
+            case Attack.Gale:       yield return A_Gale(serial); break;
+            case Attack.CrossLaser: yield return A_CrossLaser(serial); break;
+            case Attack.RingSpiral: yield return A_RingSpiral(serial); break;
+            case Attack.Meteor:     yield return A_Meteor(serial); break;
+            case Attack.SeekerSwarm: yield return A_SeekerSwarm(serial); break;
+            case Attack.CrossFire:  yield return A_CrossFire(serial); break;
         }
     }
 
-    private void UpdateCharge()
+    // ==================== 发射原语 ====================
+    private Vector2 AimDir() { return ((Vector2)PlayerHealth.Instance.transform.position - (Vector2)transform.position).normalized; }
+    private Vector2 AimPoint() { return PlayerHealth.Instance.transform.position; }
+    private void Shoot(Vector2 dir, string tag) { EnemyBullet.Spawn(transform.position, (Vector2)transform.position + dir * 3f, tag); }
+    private void ShootFrom(Vector2 origin, Vector2 dir, string tag) { EnemyBullet.Spawn(origin, origin + dir * 3f, tag); }
+
+    // 扇形：count 发，张角 spread 弧度，围绕瞄准方向
+    private void EmitFan(int count, float spread, string tag)
     {
-        float dx = PlayerHealth.Instance.transform.position.x - transform.position.x;        float step = ChargeSpeed * Time.deltaTime;
-        float x = transform.position.x + Mathf.Sign(dx) * Mathf.Min(Mathf.Abs(dx), step);
-        float limit = Mathf.Max(4f, RunManager.RoomRight - 0.9f);
-        x = Mathf.Clamp(x, -limit, limit);
-        transform.position = new Vector3(x, transform.position.y, transform.position.z);
-        ApplyVisualScale(BossScale * 1.08f);   // 冲撞时略微"撑开"，显得更有压迫感
-
-        // 高速冲撞留残影，和冲锋怪同一套语言，但boss 更大更慢，节流放宽到 0.1 秒
-        chargeTrailTimer -= Time.deltaTime;
-        if (chargeTrailTimer <= 0f)
+        Vector2 aim = AimDir();
+        if (count <= 1) { Shoot(aim, tag); return; }
+        for (int i = 0; i < count; i++)
         {
-            chargeTrailTimer = 0.1f;
-            FxRings.AfterImage(transform.position, sr.sprite, sr.color, false);
+            float a = Mathf.Lerp(-spread * 0.5f, spread * 0.5f, i / (float)(count - 1));
+            Shoot(Rotate(aim, a), tag);
         }
-
-        TryContactDamage();
-
-        // 撞到边界或时间到了就收手
-        if (stateTimer <= 0f || Mathf.Abs(x) >= limit) EnterState(State.Recover, RecoverCharge);
     }
 
-    // —— 新招 1：无敌 + 天降酸雨 ——
-    private void UpdateRain()
+    // 环形：n 发 360 度，可带起始角度
+    private void EmitRing(int n, float startAngle, string tag)
     {
-        Drift();                                    // 悬停漂移，但此时打不动
-        ApplyVisualScale(BossScale * 1.06f);
-
-        // 视觉： Boss 上方持续冒紫色粒子，提示"正在降下什么"
-        if (sr != null) sr.color = Color.Lerp(CurrentColor, new Color(0.8f, 0.4f, 1f),
-            0.5f + Mathf.Sin(Time.time * 14f) * 0.3f);
-
-        actionTimer -= Time.deltaTime;
-        if (actionTimer <= 0f)
+        for (int i = 0; i < n; i++)
         {
-            actionTimer = enraged ? 0.22f : 0.32f;
-            // 在房间范围的随机 x 位置从天上生成一滴酸雨，从上往下落
-            float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
-            float x = Mathf.Lerp(-limit, limit, (float)rainRandom());
-            // 相机视野约 y=-6.8~6.8，从顶部 7 落到地板下 -5
+            float a = startAngle + i * Mathf.PI * 2f / n;
+            Shoot(new Vector2(Mathf.Cos(a), Mathf.Sin(a)), tag);
+        }
+    }
+
+    // 从天上落下的一排弹幕（酸雨 / 陨石）
+    private void EmitSkyRain(int count, string tag, bool clustered)
+    {
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
+        for (int i = 0; i < count; i++)
+        {
+            float x = clustered
+                ? Mathf.Lerp(AimPoint().x - 3f, AimPoint().x + 3f, (float)rainRandom())
+                : Mathf.Lerp(-limit, limit, (float)rainRandom());
+            x = Mathf.Clamp(x, -limit, limit);
             Vector2 from = new Vector2(x, 7f);
-            Vector2 to = new Vector2(x, -5f);
-            EnemyBullet.Spawn(from, to, "酸雨");
-        }
-
-        if (stateTimer <= 0f)
-        {
-            invincible = false;
-            if (sr != null) sr.color = CurrentColor;
-            EnterState(State.Recover, RecoverBurst);
+            ShootFrom(from, Vector2.down, tag);
         }
     }
 
-    // 确定性伪随机（不引入新 Random 源，保护 seed 复现）
     private float rainRandom()
     {
         rainSeed = rainSeed * 0.6180339887f + 0.31415926f;
@@ -374,74 +415,351 @@ public class Boss : MonoBehaviour
     }
     private float rainSeed = 0.37f;
 
-    // —— 新招 2：长蓄力大激光 ——
-    private void UpdateLaserCharge()
-    {
-        // 蓄力期间 Boss 定住，锁定高度越来越亮的光环
-        ApplyVisualScale(BossScale * (1f + (1f - stateTimer / Mathf.Max(0.01f, stateDuration)) * 0.14f));
-        telegraphRingTimer -= Time.deltaTime;
-        if (telegraphRingTimer <= 0f)
-        {
-            telegraphRingTimer = 0.1f;
-            FxRings.Land(new Vector2(transform.position.x, laserY), 0.4f);
-        }
-        if (sr != null) sr.color = Mathf.Repeat(Time.time * 18f, 1f) > 0.5f
-            ? new Color(1f, 0.3f, 0.3f) : CurrentColor;
+    // ==================== 22 招实现 ====================
 
-        if (stateTimer <= 0f)
-        {
-            if (sr != null) sr.color = CurrentColor;
-            FireLaserVolley();
-            EnterState(State.LaserFire, enraged ? 0.55f : 0.4f);
-            HitFeedback.Play(HitFeedback.Feel.Kill);
-        }
+    // 基础扇形（深渊会自动升级为双扇，见 FireFan 复用）
+    private System.Collections.IEnumerator A_Fan(int s)
+    {
+        FireFan();
+        yield return WaitGameplay(0.25f, s);
+        yield return FinishAttack(s, RecoverBurst);
     }
 
-    private void UpdateLaserFire()
+    // 冲撞
+    private System.Collections.IEnumerator A_Charge(int s)
     {
-        ApplyVisualScale(BossScale * 1.1f);
-        if (stateTimer <= 0f) EnterState(State.Recover, RecoverCharge);
+        float dur = enraged ? 0.7f : 0.85f;
+        float t = 0f;
+        while (t < dur)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            if (!PauseMenu.IsPaused && !RunManager.IsSpawning)
+            {
+                float dx = AimPoint().x - transform.position.x;
+                float step = ChargeSpeed * Time.deltaTime;
+                float x = transform.position.x + Mathf.Sign(dx) * Mathf.Min(Mathf.Abs(dx), step);
+                float limit = Mathf.Max(4f, RunManager.RoomRight - 0.9f);
+                x = Mathf.Clamp(x, -limit, limit);
+                transform.position = new Vector3(x, transform.position.y, transform.position.z);
+                ApplyVisualScale(BossScale * 1.08f);
+                chargeTrailTimer -= Time.deltaTime;
+                if (chargeTrailTimer <= 0f)
+                {
+                    chargeTrailTimer = 0.1f;
+                    FxRings.AfterImage(transform.position, sr.sprite, sr.color, false);
+                }
+                TryContactDamage();
+                if (Mathf.Abs(x) >= limit) break;
+                t += Time.deltaTime;
+            }
+            yield return null;
+        }
+        yield return FinishAttack(s, RecoverCharge);
     }
 
-    // 激光弹幕：沿锁定高度一整排密集子弹，留几个缺口让玩家躲
-    private void FireLaserVolley()
+    // 全屏弹幕墙（留大缝）
+    private System.Collections.IEnumerator A_Wall(int s)
     {
+        FireWall();
+        yield return WaitGameplay(0.5f, s);
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 无敌酸雨
+    private System.Collections.IEnumerator A_Rain(int s)
+    {
+        invincible = true;
+        GameAudio.Play(GameAudio.Sfx.Wave);
+        float dur = enraged ? 3.2f : 2.6f;
+        float t = 0f, tick = 0f;
+        while (t < dur)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            if (!PauseMenu.IsPaused && !RunManager.IsSpawning)
+            {
+                if (sr != null) sr.color = Color.Lerp(CurrentColor, new Color(0.8f, 0.4f, 1f), 0.5f + Mathf.Sin(Time.time * 14f) * 0.3f);
+                tick -= Time.deltaTime;
+                if (tick <= 0f) { tick = enraged ? 0.22f : 0.32f; EmitSkyRain(1, "酸雨", false); }
+                t += Time.deltaTime;
+            }
+            yield return null;
+        }
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 大激光（锁高度）
+    private System.Collections.IEnumerator A_Laser(int s)
+    {
+        laserY = AimPoint().y;
+        float charge = enraged ? 1.1f : 1.5f;
+        float t = 0f;
+        while (t < charge)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            if (!PauseMenu.IsPaused && !RunManager.IsSpawning)
+            {
+                telegraphRingTimer -= Time.deltaTime;
+                if (telegraphRingTimer <= 0f) { telegraphRingTimer = 0.1f; FxRings.Land(new Vector2(transform.position.x, laserY), 0.4f); }
+                if (sr != null) sr.color = Mathf.Repeat(Time.time * 18f, 1f) > 0.5f ? new Color(1f, 0.3f, 0.3f) : CurrentColor;
+                t += Time.deltaTime;
+            }
+            yield return null;
+        }
+        FireLaserVolley();
+        HitFeedback.Play(HitFeedback.Feel.Kill);
+        yield return WaitGameplay(enraged ? 0.55f : 0.4f, s);
+        yield return FinishAttack(s, RecoverCharge);
+    }
+
+    // 螺旋：连续旋转发射
+    private System.Collections.IEnumerator A_Spiral(int s)
+    {
+        int shots = enraged ? 30 : 22;
+        float angle = 0f;
+        for (int i = 0; i < shots; i++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            // 对向两发，每步旋转 0.42 弧度 —— 形成螺旋
+            float a = angle;
+            Shoot(new Vector2(Mathf.Cos(a), Mathf.Sin(a)), "螺旋");
+            Shoot(new Vector2(-Mathf.Cos(a), -Mathf.Sin(a)), "螺旋");
+            angle += 0.42f;
+            yield return WaitGameplay(enraged ? 0.045f : 0.06f, s);
+        }
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 追踪水弹：一次 3 发朝玩家方向
+    private System.Collections.IEnumerator A_Homing(int s)
+    {
+        for (int i = 0; i < 3; i++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            EmitFan(3, 0.18f, "追踪");
+            yield return WaitGameplay(0.22f, s);
+        }
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 散弹爆发：广角大散射
+    private System.Collections.IEnumerator A_Burst(int s)
+    {
+        EmitFan(enraged ? 13 : 9, 2.4f, "散爆");
+        yield return WaitGameplay(0.3f, s);
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 泪雨：bowser 式向下洒一排
+    private System.Collections.IEnumerator A_TearRain(int s)
+    {
+        EmitSkyRain(enraged ? 16 : 10, "泪雨", false);
+        yield return WaitGameplay(0.5f, s);
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 孢子云：近身大范围慢速环
+    private System.Collections.IEnumerator A_SporeCloud(int s)
+    {
+        EmitRing(enraged ? 24 : 16, (float)rainRandom() * 6.28f, "孢子云");
+        yield return WaitGameplay(0.5f, s);
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 交叉散射：四个方向各一束
+    private System.Collections.IEnumerator A_Cross(int s)
+    {
+        Vector2 aim = AimDir();
+        for (int d = 0; d < 4; d++)
+        {
+            Vector2 baseDir = Rotate(aim, d * Mathf.PI * 0.5f);
+            for (int i = -1; i <= 1; i++) Shoot(Rotate(baseDir, i * 0.14f), "交叉");
+        }
+        yield return WaitGameplay(0.35f, s);
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 双螺旋：两组反向旋转
+    private System.Collections.IEnumerator A_TwinSpiral(int s)
+    {
+        int shots = enraged ? 18 : 12;
+        float a1 = 0f, a2 = Mathf.PI;
+        for (int i = 0; i < shots; i++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            Shoot(new Vector2(Mathf.Cos(a1), Mathf.Sin(a1)), "双螺旋");
+            Shoot(new Vector2(Mathf.Cos(a2), Mathf.Sin(a2)), "双螺旋");
+            a1 += 0.38f; a2 -= 0.38f;
+            yield return WaitGameplay(enraged ? 0.05f : 0.07f, s);
+        }
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 地雷孢子：地上放几颗延迟弹
+    private System.Collections.IEnumerator A_Mine(int s)
+    {
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 2f);
+        int n = enraged ? 6 : 4;
+        for (int i = 0; i < n; i++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            float x = Mathf.Lerp(-limit, limit, (i + 0.5f) / n);
+            Vector2 from = new Vector2(x, -3.4f);
+            ShootFrom(from, Vector2.up, "孢子雷");
+            yield return WaitGameplay(0.12f, s);
+        }
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 毒雾扩散：无敌 + 从中心向外多圈
+    private System.Collections.IEnumerator A_PoisonMist(int s)
+    {
+        invincible = true;
+        int rings = enraged ? 4 : 3;
+        for (int r = 0; r < rings; r++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            EmitRing(12, r * 0.26f, "毒雾");
+            yield return WaitGameplay(0.42f, s);
+        }
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 五连点射
+    private System.Collections.IEnumerator A_QuickShot(int s)
+    {
+        for (int i = 0; i < 5; i++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            EmitFan(1, 0f, "点射");
+            yield return WaitGameplay(0.14f, s);
+        }
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 回头弹：先朝玩家打，再反方向补一发
+    private System.Collections.IEnumerator A_Backshot(int s)
+    {
+        Vector2 aim = AimDir();
+        Shoot(aim, "回头弹");
+        yield return WaitGameplay(0.3f, s);
+        Shoot(-aim, "回头弹");
+        EmitFan(3, 0.2f, "回头弹");
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 疾风三连：三次冲撞（缩时版）
+    private System.Collections.IEnumerator A_Gale(int s)
+    {
+        for (int k = 0; k < 3; k++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            float t = 0f;
+            while (t < 0.32f)
+            {
+                if (s != attackSerial || state == State.Dead) yield break;
+                if (!PauseMenu.IsPaused && !RunManager.IsSpawning)
+                {
+                    float dx = AimPoint().x - transform.position.x;
+                    float x = transform.position.x + Mathf.Sign(dx) * Mathf.Min(Mathf.Abs(dx), ChargeSpeed * 1.2f * Time.deltaTime);
+                    float limit = Mathf.Max(4f, RunManager.RoomRight - 0.9f);
+                    x = Mathf.Clamp(x, -limit, limit);
+                    transform.position = new Vector3(x, transform.position.y, transform.position.z);
+                    TryContactDamage();
+                    t += Time.deltaTime;
+                }
+                yield return null;
+            }
+            yield return WaitGameplay(0.18f, s);
+        }
+        yield return FinishAttack(s, RecoverCharge);
+    }
+
+    // 十字激光：横竖两条
+    private System.Collections.IEnumerator A_CrossLaser(int s)
+    {
+        float t = 0f;
+        while (t < 0.9f)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            if (!PauseMenu.IsPaused && !RunManager.IsSpawning)
+            {
+                if (sr != null) sr.color = Mathf.Repeat(Time.time * 20f, 1f) > 0.5f ? new Color(1f, 0.3f, 0.3f) : CurrentColor;
+                t += Time.deltaTime;
+            }
+            yield return null;
+        }
         float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
-        const int beams = 24;
-        for (int i = 0; i < beams; i++)
+        // 横
+        for (int i = 0; i < 18; i++)
         {
-            // 留 3 个大缺口（相邻两发不发），缝隙足够玩家通过
-            if (i % 8 == 3 || i % 8 == 4) continue;
-            float x = Mathf.Lerp(-limit, limit, i / (float)(beams - 1));
-            EnemyBullet.Spawn(new Vector2(x, laserY + 0.02f),
-                new Vector2(x, laserY - 3f), "激光");
+            if (i % 7 == 3) continue;
+            float x = Mathf.Lerp(-limit, limit, i / 17f);
+            ShootFrom(new Vector2(x, AimPoint().y), Vector2.down, "十字激光");
         }
-    }
-
-    // —— 新招 3：全屏弹幕墙，留一个大缝隙 ——
-    private void FireWall()
-    {
-        float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
-        Vector2 origin = transform.position;
-        // 一道横贯全场的弹幕墙，朝玩家方向推进；中间 3 格留空 = 大缝隙
-        const int cols = 16;
-        int gapCenter = Mathf.Clamp(PlayerHealth.Instance.transform.position.x > 0
-            ? cols - 5 : 4, 2, cols - 3);   // 缝隙开在玩家侧，但留一点距离需要走位
-        for (int i = 0; i < cols; i++)
+        // 竖
+        for (int i = 0; i < 12; i++)
         {
-            if (Mathf.Abs(i - gapCenter) <= 1) continue;   // 3 格宽的大缝隙
-            float x = Mathf.Lerp(-limit, limit, i / (float)(cols - 1));
-            Vector2 from = new Vector2(x, origin.y);
-            EnemyBullet.Spawn(from, from + Vector2.down * 3f, "弹幕墙");
+            if (i % 6 == 3) continue;
+            float y = Mathf.Lerp(-3f, 5f, i / 11f);
+            ShootFrom(new Vector2(transform.position.x, y), Vector2.right, "十字激光");
         }
+        yield return WaitGameplay(0.4f, s);
+        yield return FinishAttack(s, RecoverCharge);
     }
 
-    private void UpdateWallBarrage()
+    // 螺旋环：多圈同时旋转（终极）
+    private System.Collections.IEnumerator A_RingSpiral(int s)
     {
-        ApplyVisualScale(BossScale);
-        if (stateTimer <= 0f) EnterState(State.Recover, RecoverBurst);
+        int shots = enraged ? 26 : 18;
+        float a = 0f;
+        for (int i = 0; i < shots; i++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            EmitRing(6, a, "螺旋环");
+            a += 0.3f;
+            yield return WaitGameplay(enraged ? 0.07f : 0.09f, s);
+        }
+        yield return FinishAttack(s, RecoverBurst);
     }
 
+    // 陨石雨：大颗密集天降
+    private System.Collections.IEnumerator A_Meteor(int s)
+    {
+        int waves = enraged ? 5 : 3;
+        for (int w = 0; w < waves; w++)
+        {
+            if (s != attackSerial || state == State.Dead) yield break;
+            EmitSkyRain(enraged ? 8 : 5, "陨石", w % 2 == 0);
+            yield return WaitGameplay(0.45f, s);
+        }
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 追踪群：围绕玩家散开的一圈
+    private System.Collections.IEnumerator A_SeekerSwarm(int s)
+    {
+        Vector2 c = AimPoint();
+        int n = enraged ? 14 : 9;
+        float a0 = (float)rainRandom() * 6.28f;
+        for (int i = 0; i < n; i++)
+        {
+            float a = a0 + i * Mathf.PI * 2f / n;
+            Vector2 dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
+            ShootFrom(c + dir * 3f, -dir, "追踪群");   // 从外向内收拢
+        }
+        yield return WaitGameplay(0.45f, s);
+        yield return FinishAttack(s, RecoverBurst);
+    }
+
+    // 全屏十字（终极）：扇幕 + 天雨同时
+    private System.Collections.IEnumerator A_CrossFire(int s)
+    {
+        EmitFan(enraged ? 15 : 11, 2.8f, "十字火");
+        yield return WaitGameplay(0.3f, s);
+        EmitSkyRain(enraged ? 12 : 7, "十字火", true);
+        yield return WaitGameplay(0.4f, s);
+        yield return FinishAttack(s, RecoverBurst);
+    }
     private void UpdateRecover()
     {
         // 硬直期间不移动，给玩家反打窗口
@@ -457,6 +775,47 @@ public class Boss : MonoBehaviour
         x = Mathf.Clamp(x, -limit, limit);
         float y = baseY + Mathf.Sin(Time.time * 1.6f + hoverSeed) * 0.22f;
         transform.position = new Vector3(x, y, transform.position.z);
+    }
+
+    // 攻击时的慢速漂移（比待机慢，让弹幕轨迹可预判）
+    private void DriftSlower()
+    {
+        float x = transform.position.x;
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 2f);
+        x = Mathf.Clamp(x, -limit, limit);
+        float y = baseY + Mathf.Sin(Time.time * 1.2f + hoverSeed) * 0.14f;
+        transform.position = new Vector3(x, y, transform.position.z);
+        ApplyVisualScale(BossScale);
+    }
+
+    // 全屏弹幕墙（留一个大缝隙）
+    private void FireWall()
+    {
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
+        Vector2 origin = transform.position;
+        const int cols = 16;
+        int gapCenter = AimPoint().x > 0 ? cols - 5 : 4;
+        gapCenter = Mathf.Clamp(gapCenter, 2, cols - 3);
+        for (int i = 0; i < cols; i++)
+        {
+            if (Mathf.Abs(i - gapCenter) <= 1) continue;   // 3 格宽的大缝隙
+            float x = Mathf.Lerp(-limit, limit, i / (float)(cols - 1));
+            Vector2 from = new Vector2(x, origin.y);
+            ShootFrom(from, Vector2.down, "弹幕墙");
+        }
+    }
+
+    // 激光弹幕：沿锁定高度一整排密集子弹，留几个缺口
+    private void FireLaserVolley()
+    {
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
+        const int beams = 24;
+        for (int i = 0; i < beams; i++)
+        {
+            if (i % 8 == 3 || i % 8 == 4) continue;   // 3 个大缺口
+            float x = Mathf.Lerp(-limit, limit, i / (float)(beams - 1));
+            ShootFrom(new Vector2(x, laserY + 0.02f), Vector2.down, "激光");
+        }
     }
 
     // 主攻击，按变体分三种模式：环形 / 双扇形 / 普通扇形
@@ -569,6 +928,9 @@ public class Boss : MonoBehaviour
     {
         state = State.Dead;
         hp = 0;
+        attackSerial++;                 // 让正在跑的攻击协程失效，死亡后不再发弹
+        invincible = false;
+        StopAllCoroutines();            // 停掉攻击协程和闪白协程
         if (col != null) col.enabled = false;
         FxRings.Burst(transform.position, new Color(1f, 0.72f, 0.4f, 0.95f), 2.6f);
         HitFeedback.Play(HitFeedback.Feel.Kill);
@@ -584,6 +946,9 @@ public class Boss : MonoBehaviour
     public void Despawn()
     {
         state = State.Dead;
+        attackSerial++;
+        invincible = false;
+        StopAllCoroutines();
         Destroy(gameObject);
     }
 
