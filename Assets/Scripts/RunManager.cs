@@ -503,6 +503,12 @@ public class RunManager : MonoBehaviour
         GameObject go = new GameObject("Boss");
         go.transform.position = from;
         go.transform.localScale = Vector3.one * 0.5f;
+
+        // 先算出 Boss 类型：第几个 Boss（0 起）按章节递增，4 种循环。
+        // 必须先算——下面选贴图要用 kind（CS0844：局部变量不能在声明前使用）。
+        int bossIndex = ChapterOf(roomIndex);
+        Boss.Kind kind = (Boss.Kind)(bossIndex % 4);
+
         SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
         // 按 Boss 类型选专属贴图（缺图自动退回原版 boss.png）
         sr.sprite = ArtStore.BossFor((int)kind) ?? enemySprite;
@@ -511,10 +517,6 @@ public class RunManager : MonoBehaviour
         go.AddComponent<BoxCollider2D>();
 
         Boss boss = go.AddComponent<Boss>();
-        // 第几个 Boss（0 起）：两种模式都按章节递增
-        int bossIndex = ChapterOf(roomIndex);
-        // 选 Boss 类型：4 种循环。标准模式 4 章正好各一种；无尽模式 bossIndex%4 轮流出现。
-        Boss.Kind kind = (Boss.Kind)(bossIndex % 4);
         // 血量按 bossIndex 递增（不是按类型），保证后期 Boss 更耐打
         int hp = 30 + bossIndex * 12 + Mathf.RoundToInt(stats.enemyHpBonus) * 3;
         boss.Init(hp, 1.6f, from, to, kind);
