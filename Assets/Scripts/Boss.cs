@@ -18,9 +18,21 @@ public class Boss : MonoBehaviour
     private const float BossScale = 1.9f;
     private const float BossEnterScale = 0.45f;
 
+    // 有美术时用淡染色做蓄力/狂暴（整块纯色会把画好的 Boss 盖成色块）；
+    // 没图时退回原来的纯色方块表现
     private static readonly Color BaseColor = new Color(0.95f, 0.32f, 0.52f, 1f);
     private static readonly Color TelegraphColor = new Color(1f, 0.86f, 0.35f, 1f);
-    private static readonly Color EnragedColor = new Color(1f, 0.22f, 0.30f, 1f);   // 二阶段：更红更凶
+    private static readonly Color EnragedColor = new Color(1f, 0.22f, 0.30f, 1f);
+
+    private bool hasArt;
+    private Color CurrentColor
+    {
+        get
+        {
+            if (!hasArt) return enraged ? EnragedColor : BaseColor;
+            return enraged ? new Color(1f, 0.55f, 0.58f) : Color.white;
+        }
+    }
 
     private int hp;
     private int maxHp;
@@ -43,8 +55,6 @@ public class Boss : MonoBehaviour
     public bool Alive { get { return state != State.Dead; } }
     public bool Enraged { get { return enraged; } }
 
-    private Color CurrentColor { get { return enraged ? EnragedColor : BaseColor; } }
-
     // 二阶段：预警更短、间隔更小、冲得更快。数值下降但都还在"能反应"的范围内。
     private float TelegraphTime { get { return enraged ? 0.34f : 0.5f; } }
     private float IdleTime { get { return enraged ? 0.70f : 1.1f; } }
@@ -66,6 +76,7 @@ public class Boss : MonoBehaviour
 
         sr = GetComponent<SpriteRenderer>();
         col = GetComponent<Collider2D>();
+        hasArt = sr != null && sr.sprite != null && ArtStore.Boss != null && sr.sprite == ArtStore.Boss;
         if (sr != null) sr.color = CurrentColor;
 
         state = State.Enter;
@@ -126,7 +137,8 @@ public class Boss : MonoBehaviour
         if (sr != null)
         {
             bool blink = Mathf.Repeat(stateTimer * 12f, 1f) > 0.5f;
-            sr.color = blink ? TelegraphColor : CurrentColor;
+            // 有美术时只做淡黄闪烁，不用纯色盖掉原画
+            sr.color = blink ? (hasArt ? new Color(1f, 0.86f, 0.55f) : TelegraphColor) : CurrentColor;
         }
         float progress = 1f - Mathf.Clamp01(stateTimer / Mathf.Max(0.01f, stateDuration));
         float pulse = 1f + Mathf.Sin(progress * Mathf.PI) * 0.08f;
@@ -223,7 +235,7 @@ public class Boss : MonoBehaviour
     private void Enrage()
     {
         enraged = true;
-        if (sr != null) sr.color = EnragedColor;
+        if (sr != null) sr.color = CurrentColor;
 
         HitParticles.Spawn(transform.position, new Color(1f, 0.78f, 0.32f, 1f), 20);
         HitFeedback.Play(HitFeedback.Feel.Kill);

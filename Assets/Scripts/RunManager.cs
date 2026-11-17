@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v1.0";
+    public const string BuildTag = "v1.1";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -394,8 +394,8 @@ public class RunManager : MonoBehaviour
         go.transform.position = from;
         go.transform.localScale = Vector3.one * 0.5f;
         SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = enemySprite;
-        sr.color = new Color(0.95f, 0.32f, 0.52f, 1f);
+        sr.sprite = ArtStore.Boss ?? enemySprite;
+        sr.color = Color.white;
         sr.sortingOrder = 6;
         go.AddComponent<BoxCollider2D>();
 
@@ -701,14 +701,30 @@ public class RunManager : MonoBehaviour
             go.transform.position = new Vector3(x, y, 0f);
             go.transform.localScale = Vector3.one * (scale * CharacterScale);
             SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = enemySprite;
+            // 按类型换美术：加载失败时 ArtStore 返回 null，继续用原来的纯色方块
+            switch (kind)
+            {
+                case Enemy.Kind.Charger: sr.sprite = ArtStore.Charger ?? enemySprite; break;
+                case Enemy.Kind.Turret: sr.sprite = ArtStore.Turret ?? enemySprite; break;
+                default: sr.sprite = ArtStore.Shooter ?? enemySprite; break;
+            }
             sr.color = color;
             sr.sortingOrder = 5;
             go.AddComponent<BoxCollider2D>();
             Enemy e = go.AddComponent<Enemy>();
             e.kind = kind;                 // 必须在 Init 之前：Init 会按 kind 决定移动速度
             e.TypeName = typeName;
-            e.Init(hp, interval * paceScale, color, firstDelay);
+
+            // 有美术时只做淡染色区分变种（快速偏暖、精英偏紫），
+            // 再用原来的饱和纯色会把画好的 figure 整个染成一坨色块
+            Color tint = color;
+            if (sr.sprite != enemySprite)
+            {
+                if (typeName == "快速怪") tint = new Color(1f, 0.82f, 0.62f);
+                else if (typeName == "精英怪") tint = new Color(0.84f, 0.68f, 1f);
+                else tint = Color.white;
+            }
+            e.Init(hp, interval * paceScale, tint, firstDelay);
 
             // 入场：从墙后面飞进来（墙的 sortingOrder 比敌人高，所以会先被墙挡住再"钻"出来）。
             // 每只飞的时长在 1.1~1.7 秒之间随机，并且彼此错开 0.12 秒；

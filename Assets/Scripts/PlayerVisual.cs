@@ -7,6 +7,7 @@ public class PlayerVisual : MonoBehaviour
 {
     private static PlayerVisual instance;
 
+    private bool hasArt;           // 是否成功加载角色美术（决定要不要翻转 / 画程序化五官）
     private SpriteRenderer body;
     private SpriteRenderer outline;
     private SpriteRenderer eyeL;
@@ -44,24 +45,37 @@ public class PlayerVisual : MonoBehaviour
             return;
         }
 
-        body.color = BodyColor;
+        // 用真正的角色美术；加载失败时退回原来的暖白方块 + 描边 + 眼睛
+        Sprite art = ArtStore.Player;
+        hasArt = art != null;
+        if (hasArt)
+        {
+            body.sprite = art;
+            body.color = Color.white;
+        }
+        else
+        {
+            body.color = BodyColor;
+        }
         body.sortingOrder = BodyOrder;
 
-        // 描边：同一张精灵放大 1.34 倍垫在下面
+        // 有美术时不再画程序化的描边和眼睛（画上去会和原画打架）
         outline = MakePart("Outline", body.sprite, InkColor, BodyOrder - 1);
         outline.transform.localScale = Vector3.one * 1.34f;
+        outline.enabled = !hasArt;
 
-        // 眼睛：两小块，位置随朝向偏移
         eyeL = MakePart("EyeL", body.sprite, InkColor, BodyOrder + 1);
         eyeR = MakePart("EyeR", body.sprite, InkColor, BodyOrder + 1);
         eyeL.transform.localScale = Vector3.one * 0.15f;
         eyeR.transform.localScale = Vector3.one * 0.15f;
+        eyeL.enabled = !hasArt;
+        eyeR.enabled = !hasArt;
         UpdateEyes();
 
         // 让 PlayerHealth 的"复活/闪白收尾"也用这个新颜色，
         // 否则场景里原来的颜色会在下次重置时把这个白盖回去
         if (PlayerHealth.HasInstance && PlayerHealth.Instance.gameObject == gameObject)
-            PlayerHealth.Instance.SetBaseColor(BodyColor);
+            PlayerHealth.Instance.SetBaseColor(hasArt ? Color.white : BodyColor);
     }
 
     private SpriteRenderer MakePart(string name, Sprite sprite, Color color, int order)
@@ -90,6 +104,10 @@ public class PlayerVisual : MonoBehaviour
                 if (!float.IsNaN(mx)) faceDir = mx >= transform.position.x ? 1f : -1f;
             }
         }
+
+        // 角色美术是朝右画的，朝左时整张图翻转（不缩放 transform，避免影响碰撞和子节点）
+        if (hasArt && body != null) body.flipX = faceDir < 0f;
+
         UpdateEyes();
     }
 
@@ -108,9 +126,13 @@ public class PlayerVisual : MonoBehaviour
     private void ApplyVisible(bool visible)
     {
         if (body != null) body.enabled = visible;
-        if (outline != null) outline.enabled = visible;
-        if (eyeL != null) eyeL.enabled = visible;
-        if (eyeR != null) eyeR.enabled = visible;
+        // 有美术时描边/五官本来就是关的，闪烁不能把它们重新打开
+        if (!hasArt)
+        {
+            if (outline != null) outline.enabled = visible;
+            if (eyeL != null) eyeL.enabled = visible;
+            if (eyeR != null) eyeR.enabled = visible;
+        }
     }
 
     private void OnDestroy()
