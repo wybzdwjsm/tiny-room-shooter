@@ -20,13 +20,18 @@ public class PlayerVisual : MonoBehaviour
     private Camera cam;
     private PlayerMotor motor;
 
+    // 弹簧驱动的动画量（替代原来的线性 MoveTowards，动作之间才有惯性衔接）
+    private Spring squashSpring;       // 落地压扁
+    private Spring stretchSpring;      // 起跳拉伸
+    private Spring recoilSpring;       // 开火/受击后坐
+    private Spring leanSpring;         // 奔跑倾斜
+    private float runPhase;            // 跑步周期相位（连续起伏，不是一次性倾斜）
+    private int lastFaceSign;          // 转身检测
+
     private bool hasArt;
     private float faceDir = 1f;
-    private float squash;              // 落地压扁量，0~1，随时间回弹
-    private float stretch;             // 起跳拉伸量
-    private float recoil;              // 开火后坐，沿射击反方向偏移 + 轻微缩放
     private Vector2 recoilDir;
-    private float hurtLock;            // 受击后短时间内不被开火后坐覆盖
+    private float hurtLock;
     private bool wasGrounded;
     private bool visible = true;
     private Vector3 baseScale = Vector3.one;
@@ -51,8 +56,8 @@ public class PlayerVisual : MonoBehaviour
     public static void FireKick(Vector2 muzzle, Vector2 dir)
     {
         if (instance == null || instance.hurtLock > 0f) return;
-        instance.recoil = 1f;
         instance.recoilDir = -dir;
+        instance.recoilSpring.Kick(-9f);   // 给个冲量，弹簧自己弹回来
         FxRings.Muzzle(muzzle, dir, new Color(1f, 0.86f, 0.42f, 0.9f));
     }
 
@@ -60,9 +65,9 @@ public class PlayerVisual : MonoBehaviour
     public static void Hurt(Vector2 fromDir)
     {
         if (instance == null) return;
-        instance.recoil = 1f;
         instance.hurtLock = 0.22f;
         instance.recoilDir = new Vector2(-fromDir.x, 0.35f).normalized;
+        instance.recoilSpring.Kick(-16f);  // 受击冲量比开火大
         HitParticles.Spawn(instance.transform.position, new Color(1f, 0.45f, 0.5f, 1f), 8);
     }
 
@@ -180,45 +185,71 @@ public class PlayerVisual : MonoBehaviour
         float vy = motor != null ? motor.VerticalSpeed : 0f;
         float vx = motor != null ? motor.HorizontalSpeed : 0f;
         bool grounded = motor != null && motor.Grounded;
+        float dt = Time.deltaTime;
 
-        // 落地瞬间：压扁 + 一簇扬尘
+        // —— 事件：给弹簧冲量 ——
+        // 落地：压扁量按落地速度，冲量让弹簧"砸"下去再弹回
         if (grounded && !wasGrounded && vy < -2f)
         {
             float strength = Mathf.Clamp01(-vy / 14f);
-            squash = strength * 0.8f + 0.2f;
+            squashSpring.Kick(-(strength * 10f + 4f));
             HitParticles.Spawn((Vector2)transform.position + Vector2.down * 0.28f, DustColor, 5);
             FxRings.Land((Vector2)transform.position + Vector2.down * 0.31f, strength);
         }
-        // 起跳瞬间：拉长 + 扬尘环
+        // 起跳：拉伸冲量
         if (!grounded && wasGrounded && vy > 0f)
         {
-            stretch = Mathf.Clamp01(vy / 14f) * 0.7f + 0.2f;
+            stretchSpring.Kick(Mathf.Clamp01(vy / 14f) * 7f + 3f);
             FxRings.Jump((Vector2)transform.position + Vector2.down * 0.30f);
         }
+        // 转身：倾斜弹簧给个反向冲量，有一个"急停再转"的过渡
+        int faceSign = faceDir >= 0f ? 1 : -1;
+        if (lastFaceSign != 0 && faceSign != lastFaceSign)
+            leanSpring.Kick(-faceSign * 6f);
+        lastFaceSign = faceSign;
 
         wasGrounded = grounded;
+        hurtLock = Mathf.Max(0f, hurtLock - dt);
 
-        squash = Mathf.MoveTowards(squash, 0f, Time.deltaTime * 4.5f);
-        stretch = Mathf.MoveTowards(stretch, 0f, Time.deltaTime * 4.5f);
-        recoil = Mathf.MoveTowards(recoil, 0f, Time.deltaTime * 9f);
-        hurtLock = Mathf.Max(0f, hurtLock - Time.deltaTime);
+        // —— 弹簧推进（刚度/阻尼调到"轻微超调"，动作有弹性不僵硬）——
+        squashSpring.Step(0f, 190f, 21f, dt);
+        stretchSpring.Step(0f, 180f, 20f, dt);
+        recoilSpring.Step(0f, 240f, 23f, dt);
 
-        // 待机呼吸（只在地面上、速度很小时）
-        float breath = (grounded && Mathf.Abs(vx) < 0.2f)
-            ? Mathf.Sin(Time.time * 2.6f) * 0.025f
+        // —— 连续状态驱动（不是事件，每帧按实际状态算）——
+        // 跑步周期：相位随速度推进，身体有节奏地上下起伏 + 左右摇摆
+        float speed01 = Mathf.Clamp01(Mathf.Abs(vx) / 7f);
+        runPhase += dt * (4f + speed01 * 9f);
+        float bob = grounded ? Mathf.Sin(runPhase) * 0.05f * speed01 : 0f;
+        float sway = grounded ? Mathf.Sin(runPhase * 0.5f) * 0.025f * speed01 : 0f;
+
+        // 空中姿态连续映射：上升头上脚下（拉长），下落反过来——不再只在起跳瞬间变一次
+        float airStretch = grounded ? 0f : Mathf.Clamp(vy / 16f, -0.5f, 0.5f);
+
+        // 待机呼吸：站定时才呼吸，跑起来让位给跑步起伏
+        float breath = (grounded && speed01 < 0.05f)
+            ? Mathf.Sin(Time.time * 2.6f) * 0.028f
             : 0f;
 
-        float sy = 1f + breath + stretch * 0.30f - squash * 0.28f;
-        float sx = 1f - breath * 0.5f - stretch * 0.16f + squash * 0.24f;
+        // 奔跑倾斜：弹簧追踪目标角度，转身冲量会叠加出过渡
+        float targetTilt = Mathf.Clamp(-vx / 8f, -1f, 1f) * 7f;
+        leanSpring.Step(targetTilt, 130f, 19f, dt);
+
+        // —— 合成最终形变 ——
+        float sq = squashSpring.value;
+        float st = stretchSpring.value;
+        float sy = 1f + breath + st * 0.30f + sq * 0.16f + airStretch * 0.22f + bob;
+        float sx = 1f - breath * 0.5f - st * 0.16f - sq * 0.14f - airStretch * 0.12f - bob * 0.5f;
         visualRoot.localScale = new Vector3(baseScale.x * sx, baseScale.y * sy, 1f);
 
-        // 后坐：视觉层往射击反方向"顿"一下（最多 0.06 单位），不碰根节点
-        float rk = recoil * recoil * 0.06f;
-        visualRoot.localPosition = new Vector3(recoilDir.x * rk, recoilDir.y * rk, 0f);
+        // 后坐 + 跑步起伏的位置偏移（都在视觉层，不碰根节点碰撞）
+        float rk = recoilSpring.value * 0.012f;
+        visualRoot.localPosition = new Vector3(
+            recoilDir.x * rk + sway,
+            recoilDir.y * rk + bob * 0.4f,
+            0f);
 
-        // 奔跑倾斜：速度越大越前倾，最多 8 度
-        float tilt = Mathf.Clamp(-vx / 8f, -1f, 1f) * 8f;
-        visualRoot.localRotation = Quaternion.Euler(0f, 0f, tilt);
+        visualRoot.localRotation = Quaternion.Euler(0f, 0f, leanSpring.value);
     }
 
     private void ApplyVisible(bool v)

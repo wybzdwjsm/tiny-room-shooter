@@ -1249,3 +1249,61 @@ Assets\Scripts\Boss.cs(74,9): error CS0103: The name 'enterTo' does not exist in
 这个 bug 也再次证明：静态检查（括号平衡、字段扫描）只能兜底一部分，
 **真正发现它的是编辑器 Console 的 CS0103**。所以任何"我这边检查过了"都不能替代
 在编辑器里按 `Ctrl+R` 后看一眼 Console。
+
+## W26：让动作真正连贯（v1.5）
+
+### 问题：之前的动作是"离散事件 + 匀速回弹"
+
+W23/W24 的 squash/stretch 用 `Mathf.MoveTowards(squash, 0, dt*4.5)` 回弹——
+这是**匀速**的，到点就停，动作之间有明显的"断口"：落地压扁后直挺挺恢复，
+转身是一个瞬间的 flipX，跑步只有一个固定倾角。看起来像一串独立动作，不是连续表演。
+
+### 改法：弹簧物理 + 连续状态驱动
+
+新增 `Spring.cs`（值类型，零 GC）：
+
+```csharp
+public struct Spring {
+    public float value, velocity;
+    public void Kick(float impulse) { velocity += impulse; }
+    public void Step(float target, float stiffness, float damping, float dt) {
+        if (dt > 0.04f) dt = 0.04f;              // 卡顿时防止数值爆炸
+        float accel = (target - value) * stiffness - velocity * damping;
+        velocity += accel * dt; value += velocity * dt;
+    }
+}
+```
+
+阻尼略小于临界值（`damping < 2*sqrt(stiffness)`），动作会**轻微超调再收回**——
+这是"有质量"的关键，匀速回弹永远做不到。
+
+四根弹簧分别驱动：压扁 / 拉伸 / 后坐 / 倾斜。事件不再直接设值，而是给冲量：
+
+| 事件 | 原来 | 现在 |
+| --- | --- | --- |
+| 落地 | `squash = 0.8` | `squashSpring.Kick(-(strength*10+4))` |
+| 起跳 | `stretch = 0.7` | `stretchSpring.Kick(vy/14*7+3)` |
+| 开火 | `recoil = 1` | `recoilSpring.Kick(-9)` |
+| 受击 | `recoil = 1` | `recoilSpring.Kick(-16)`（比开火大） |
+| 转身 | 瞬间 flipX | `leanSpring.Kick(-faceSign*6)`，有急停过渡 |
+
+### 连续状态取代一次性触发
+
+- **跑步周期**：`runPhase += dt * (4 + speed01*9)`，身体按相位上下起伏 + 左右摇摆，
+  速度越快频率越高——这是"跑起来了"和"在滑行"的区别；
+- **空中姿态**：`airStretch = clamp(vy/16, -0.5, 0.5)` 每帧连续映射，
+  上升时头上脚下、下落时反过来。不再是起跳瞬间变一下然后冻住；
+- **待机呼吸**：只在 `speed01 < 0.05` 时启用，和跑步起伏互斥，不会叠加成奇怪的抖动。
+
+形变合成时 `airStretch` / `bob` / 弹簧值全部相加，所以动作之间是**叠加过渡**而不是切换。
+
+### 版本
+
+`Spring.cs` 是新文件——又踩了一次"新文件需要 meta 才会被编译"的坑。
+我这次主动生成了 `.cs.meta`（用一个唯一的 base64 GUID，格式照抄 `Ambience.cs.meta`），
+但编辑器当前不响应外部文件变化，**必须按 Ctrl+R** 才会真正编译进去。
+编译后请用 dll 字符串验证，不要只看 Editor.log：
+
+```
+Library/ScriptAssemblies/Assembly-CSharp.dll 里应有 Spring / squashSpring / runPhase
+```
