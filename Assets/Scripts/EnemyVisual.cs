@@ -19,6 +19,13 @@ public class EnemyVisual : MonoBehaviour
     private float phase;               // 每只错开，避免所有敌人同时呼吸
     private float lastX;
     private float afterImageTimer;
+    private float hitSquash;           // 受击挤压量，受击瞬间置 1 后回弹
+
+    // 由 Enemy.Hit 调用：受击视觉反馈（挤压 + 抖动），让"打中了"在画面上有回响
+    public void OnHit()
+    {
+        hitSquash = 1f;
+    }
 
     public static void Attach(GameObject go)
     {
@@ -93,10 +100,16 @@ public class EnemyVisual : MonoBehaviour
             }
         }
 
+        // 受击挤压：瞬间横向撑开、纵向压扁，然后快速回弹（0.18 秒）
+        hitSquash = Mathf.Max(0f, hitSquash - Time.deltaTime * 5.5f);
+        float hit = hitSquash * hitSquash;   // 平方让衰减前段更猛、尾巴更柔
+
         visualRoot.localScale = new Vector3(
-            1f - breath * 0.6f + puff * 0.5f,
-            1f + breath + puff,
+            1f - breath * 0.6f + puff * 0.5f + hit * 0.30f,
+            1f + breath + puff - hit * 0.32f,
             1f);
-        visualRoot.localRotation = Quaternion.Euler(0f, 0f, lean);
+        // 受击时轻微抖动，和挤压叠加，"被打到"的读数更强
+        float shake = hit > 0f ? Mathf.Sin(Time.time * 50f) * hit * 5f : 0f;
+        visualRoot.localRotation = Quaternion.Euler(0f, 0f, lean + shake);
     }
 }

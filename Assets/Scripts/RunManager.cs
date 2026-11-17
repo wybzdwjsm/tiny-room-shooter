@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v2.1";
+    public const string BuildTag = "v2.2";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -22,9 +22,14 @@ public class RunManager : MonoBehaviour
     //   无尽 —— 一波接一波，每 5 波一个 Boss，永不结束，比拼最远记录
     public enum Mode { Standard, Endless }
 
-    // 章节结构：每 5 波一章，标准模式共 4 章
-    private const int WavesPerChapter = 5;
+    // 章节结构：标准模式 4 章，每章 2~4 个普通波 + 1 个 Boss 波（开局按 seed 随机决定）
     private const int StandardChapters = 4;
+    private const int MinWavesPerChapter = 2;
+    private const int MaxWavesPerChapter = 4;
+    // 无尽模式沿用固定的"每 5 波一个 Boss"
+    private const int EndlessBossEvery = 5;
+    // 每章的普通波数（开局生成，seed 可复现）；无尽模式为 null
+    private int[] chapterWaves;
 
     public static RunManager Instance { get; private set; }
     public static bool HasInstance => Instance != null;
@@ -50,13 +55,57 @@ public class RunManager : MonoBehaviour
     // 平台和敌人之间的空隙也更好读。敌人用同一系数，保持体型关系不变。
     private const float CharacterScale = 0.62f;
 
-    // 标准模式总波数由章节数算出（4×5=20），不用 SerializeField，避免 Inspector 残留旧值 3
-    private int roomCount { get { return WavesPerChapter * StandardChapters; } }
+    // 标准模式总波数 = 各章（普通波数 + 1 个 Boss）之和，开局确定后固定
+    private int roomCount
+    {
+        get
+        {
+            if (mode == Mode.Endless) return int.MaxValue;   // 无尽没有终点
+            if (chapterWaves == null) return 0;
+            int total = 0;
+            for (int i = 0; i < chapterWaves.Length; i++) total += chapterWaves[i] + 1;
+            return total;
+        }
+    }
+
+    // —— 波次/章节映射集中在这里，避免各处散落 roomIndex/N 的计算 ——
+    // 第 index 波属于第几章（0 起）
+    private int ChapterOf(int index)
+    {
+        if (mode == Mode.Endless) return index / EndlessBossEvery;
+        if (chapterWaves == null) return 0;
+        int acc = 0;
+        for (int c = 0; c < chapterWaves.Length; c++)
+        {
+            acc += chapterWaves[c] + 1;         // 该章普通波 + 1 Boss
+            if (index < acc) return c;
+        }
+        return chapterWaves.Length - 1;
+    }
+
+    // 第 index 波在章内的序号（0 起）；普通波 0..n-1，Boss 波 = n
+    private int LocalOf(int index)
+    {
+        if (mode == Mode.Endless) return index % EndlessBossEvery;
+        int c = ChapterOf(index);
+        int start = 0;
+        for (int i = 0; i < c && i < (chapterWaves == null ? 0 : chapterWaves.Length); i++)
+            start += chapterWaves[i] + 1;
+        return index - start;
+    }
+
+    // 第 index 波是否是 Boss 波
+    private bool IsBossAt(int index)
+    {
+        if (mode == Mode.Endless) return (index + 1) % EndlessBossEvery == 0;
+        int c = ChapterOf(index);
+        return chapterWaves != null && c < chapterWaves.Length && LocalOf(index) == chapterWaves[c];
+    }
     [SerializeField] private int seedOverride = 0;   // 填非 0 可固定 seed 复现
 
     // 难度曲线写在 WaveSpecFor 里：标准模式按章节递增，无尽模式按波数公式递增。
 
-    // 无尽模式：每 5 波一个 Boss——统一用 WavesPerChapter
+    // 无尽模式：每 5 波一个 Boss——统一用 EndlessBossEvery
 
     // 敌人入场：每只随机飞 1.1~1.7 秒，彼此错开 0.12 秒逐个进场
     private const float IntroMin = 1.1f;
@@ -73,11 +122,8 @@ public class RunManager : MonoBehaviour
     private Mode mode = Mode.Standard;
     private bool victory;
 
-    // 是否 Boss 波：两种模式都是每 5 波一个（第 5、10、15、20 波）
-    private bool IsBossWave
-    {
-        get { return (roomIndex + 1) % WavesPerChapter == 0; }
-    }
+    // 当前波是否 Boss 波（标准：每章末；无尽：每 5 波）
+    private bool IsBossWave { get { return IsBossAt(roomIndex); } }
 
     // 第 index 波（从 0 开始）的敌人配置。标准模式查表，无尽模式按公式递增。
     private void WaveSpecFor(int index, out int count, out int hp,
@@ -87,8 +133,8 @@ public class RunManager : MonoBehaviour
         {
             // 按章节递增：chapter=第几章(0~3)，local=章内第几波(0~4)。
             // 每过一章数量+1、血量+2，并逐章解锁更强类型；章内小幅爬升。
-            int chapter = index / WavesPerChapter;
-            int local = index % WavesPerChapter;
+            int chapter = ChapterOf(index);
+            int local = LocalOf(index);
 
             count = Mathf.Clamp(2 + chapter + local / 2, 2, 7);
             hp = Mathf.Clamp(2 + chapter * 2 + local / 2, 2, 12);
@@ -343,6 +389,21 @@ public class RunManager : MonoBehaviour
         mode = m;
         seed = newSeed;
         rng = new System.Random(seed);
+
+        // 标准模式：每章随机 2~4 个普通波（同一个 rng，保证 seed 复现）
+        if (mode == Mode.Standard)
+        {
+            chapterWaves = new int[StandardChapters];
+            for (int i = 0; i < StandardChapters; i++)
+                chapterWaves[i] = MinWavesPerChapter
+                    + rng.Next(MaxWavesPerChapter - MinWavesPerChapter + 1);
+            int total = 0;
+            for (int i = 0; i < chapterWaves.Length; i++) total += chapterWaves[i] + 1;
+            Debug.Log("[RunManager] 章节计划: " + string.Join(", ", chapterWaves)
+                + " 个普通波/章，总计 " + total + " 波");
+        }
+        else chapterWaves = null;
+
         stats = RunStats.Base();          // struct 值类型，重置不会污染基础值
         roomIndex = 0;
         killCount = 0;
@@ -383,8 +444,11 @@ public class RunManager : MonoBehaviour
         if (mode == Mode.Endless)
             return "第 " + n + " 次涨潮 · 无尽";
 
-        int chapter = roomIndex / WavesPerChapter + 1;
-        int toBoss = WavesPerChapter - (roomIndex % WavesPerChapter);
+        int chapter = ChapterOf(roomIndex) + 1;
+        int toBoss = IsBossWave ? 0
+            : (mode == Mode.Standard
+                ? chapterWaves[ChapterOf(roomIndex)] - LocalOf(roomIndex)
+                : EndlessBossEvery - LocalOf(roomIndex));
         string tail = IsBossWave ? "· 潮眼之夜" : "· " + toBoss + " 波后潮眼苏醒";
         return "第 " + chapter + " 夜 · 第 " + n + "/" + roomCount + " 波 " + tail;
     }
@@ -397,7 +461,7 @@ public class RunManager : MonoBehaviour
             if (Instance == null) return "";
             if (Instance.mode == Mode.Standard)
             {
-                int chapter = Instance.roomIndex / WavesPerChapter + 1;
+                int chapter = Instance.ChapterOf(Instance.roomIndex) + 1;
                 return "标准模式 · 第 " + chapter + "/" + StandardChapters + " 夜 · 第 "
                     + (Instance.roomIndex + 1) + "/" + Instance.roomCount + " 波";
             }
@@ -408,7 +472,10 @@ public class RunManager : MonoBehaviour
     // 每一波的开场：重生成悬浮平台 → 挑随机出生点 → 传送 → 冻结操作刷怪 → 全部落地后恢复
     private void StartWave()
     {
-        RebuildFloats();
+        // Boss 战清空所有悬浮平台：让场地变成一块空地，玩家能靠跳跃 / 走位躲弹幕和冲撞，
+        // 平台在 Boss 战反而会挡子弹、卡住走位。Boss 死后下一波会重新生成。
+        if (IsBossWave) ClearFloats();
+        else RebuildFloats();
 
         Vector3 spawn = PickSpawnPoint();
         if (PlayerHealth.HasInstance)
@@ -445,7 +512,7 @@ public class RunManager : MonoBehaviour
         Boss boss = go.AddComponent<Boss>();
         // 第几个 Boss：两种模式都按章节递增（第 5 波=0，第 10 波=1…），
         // 不然第 4 章的 Boss 和第 1 章一样好打，通关就没有成长的读数了
-        int bossIndex = roomIndex / WavesPerChapter;
+        int bossIndex = ChapterOf(roomIndex);
         int hp = 30 + bossIndex * 12 + Mathf.RoundToInt(stats.enemyHpBonus) * 3;
         boss.Init(hp, 1.6f, from, to);
 
@@ -464,7 +531,7 @@ public class RunManager : MonoBehaviour
     {
         if (phase != Phase.Playing) return;
 
-        int bossIndex = roomIndex / WavesPerChapter;
+        int bossIndex = ChapterOf(roomIndex);
         bool isFinalBoss = mode == Mode.Standard && bossIndex >= StandardChapters - 1;
 
         if (isFinalBoss)
@@ -605,21 +672,28 @@ public class RunManager : MonoBehaviour
         wall.transform.position = new Vector3(cx, 0f, 0f);
     }
 
-    // 悬浮平台：每个小关卡重新生成，所以每关的天花板布局都不一样。
-    // 4~6 块，分低/高两条带（离地 1.4~1.9 / 2.6~3.1），都在跳跃高度 3.2 的可达范围内。
-    private void RebuildFloats()
+    // 清空所有悬浮平台（Boss 战用）
+    private void ClearFloats()
     {
         foreach (GameObject go in floatPlatforms)
             if (go != null) Destroy(go);
         floatPlatforms.Clear();
+    }
+
+    // 悬浮平台：每个小关卡重新生成。
+    // 横向铺满整个房间宽度（boundLeft+1.2 ~ boundRight-1.2），数量 4~8 块，
+    // 用等宽槽位均分，每块只占槽位的一部分，保证相邻之间一定留得下能站人的缝。
+    private void RebuildFloats()
+    {
+        ClearFloats();
 
         float left = boundLeft + 1.2f;
         float right = boundRight - 1.2f;
         float span = Mathf.Max(6f, right - left);
 
-        // 4~5 块。之前是 5~7 块纯随机撒点，重试 10 次放不下就互相重叠，
-        // 看起来"很挤"——问题不在数量，而在没有分配水平空间。
-        int count = 4 + rng.Next(2);
+        // 4~8 块，按章节略增（后期章平台多一点，但始终封顶 8）
+        int chapter = ChapterOf(roomIndex);
+        int count = Mathf.Clamp(4 + rng.Next(3) + chapter / 2, 4, 8);
         float slot = span / count;
 
         for (int i = 0; i < count; i++)
@@ -681,10 +755,11 @@ public class RunManager : MonoBehaviour
         WaveSpecFor(roomIndex, out count, out waveHp, out wNormal, out wFast, out wCharger, out wTurret);
         int baseHp = Mathf.Max(1, waveHp + stats.enemyHpBonus);
 
-        // 开火节奏随进度收紧（最快 65%，再快就是纯弹幕）。标准按章节 -6%，无尽按波 -2%
-        float paceScale = mode == Mode.Standard
-            ? Mathf.Max(0.65f, 1f - (roomIndex / WavesPerChapter) * 0.06f)
-            : Mathf.Max(0.65f, 1f - roomIndex * 0.02f);
+        // 开火节奏：整体比原来快 25%（攻击欲望更强），并随进度继续收紧。
+        // 下限 0.5（原来 0.65）—— 低于这个就是纯弹幕，没有走位空间了。
+        float paceScale = (mode == Mode.Standard
+            ? Mathf.Max(0.62f, 1f - ChapterOf(roomIndex) * 0.08f)
+            : Mathf.Max(0.62f, 1f - roomIndex * 0.025f)) * 0.75f;
 
         float maxEnd = 0f;   // 最后一只的落地时刻（延迟 + 飞行）
 
@@ -743,7 +818,7 @@ public class RunManager : MonoBehaviour
                 typeName = "精英怪";
                 kind = Enemy.Kind.Shooter;
             }
-            float firstDelay = 0.6f + (float)rng.NextDouble() * 1.4f;
+            float firstDelay = 0.25f + (float)rng.NextDouble() * 0.6f;   // 首发更快（原来 0.6~2.0，敌人半天不开火）
 
             GameObject go = new GameObject("Enemy_" + roomIndex + "_" + i);
             go.transform.position = new Vector3(x, y, 0f);
@@ -872,8 +947,8 @@ public class RunManager : MonoBehaviour
         string text = IsBossWave ? Story.BossWave : Story.WaveBanner(roomIndex);
 
         // 标准模式每章第一波用章节横幅点出"进入新大关"；Boss 波不受影响
-        if (mode == Mode.Standard && !IsBossWave && roomIndex % WavesPerChapter == 0)
-            text = Story.ChapterBanner(roomIndex / WavesPerChapter);
+        if (mode == Mode.Standard && !IsBossWave && LocalOf(roomIndex) == 0)
+            text = Story.ChapterBanner(ChapterOf(roomIndex));
 
         // 无尽模式第一次超过历史最远波数，给一次明确的"破纪录"时刻；
         // 只在刚开始超过时提示一次，之后每波都提示就变成噪音了。
@@ -925,7 +1000,13 @@ public class RunManager : MonoBehaviour
                 break;
 
             case StatTarget.BulletDamage:
-                stats.bulletDamage = Mathf.Clamp(stats.bulletDamage + Mathf.RoundToInt(value), 1, 8);
+                // 伤害改成浮点（基础 0.25）后，词条按倍率叠加更合理：
+                // value=1 表示 +100%（翻倍），而不是 +1 点（那会从 0.25 直接跳到 1.25，翻 5 倍）
+                stats.bulletDamage = Mathf.Clamp(
+                    op == ModifierOp.Add
+                        ? stats.bulletDamage * (1f + value)
+                        : stats.bulletDamage * value,
+                    0.25f, 8f);
                 break;
 
             case StatTarget.MoveSpeed:
@@ -1208,7 +1289,7 @@ public class RunManager : MonoBehaviour
         GUILayout.EndHorizontal();
 
         string info = "射速 " + stats.fireRate.ToString("0.0")
-            + "     伤害 " + stats.bulletDamage
+            + "     伤害 ×" + (stats.bulletDamage / 0.25f).ToString("0.0")   // 相对基础 0.25 的倍率，比显示 0.25 直观
             + " × " + stats.bulletCount + " 弹丸"
             + "     词条 " + picked.Count;
         if (mode == Mode.Endless && GameSettings.BestWave > 0)

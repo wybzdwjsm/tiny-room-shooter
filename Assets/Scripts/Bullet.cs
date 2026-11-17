@@ -11,7 +11,7 @@ public class Bullet : MonoBehaviour
     private Weapon owner;
     private Vector2 dir;
     private float timer;
-    private int damage = 1;
+    private float damage = 0.25f;
 
     public void Init(Weapon weapon, Vector2 position, Vector2 direction)
     {
@@ -19,7 +19,7 @@ public class Bullet : MonoBehaviour
         dir = direction.normalized;
         transform.position = position;
         timer = life;
-        damage = RunManager.HasInstance ? RunManager.Current.bulletDamage : 1;
+        damage = RunManager.HasInstance ? RunManager.Current.bulletDamage : 0.25f;
         gameObject.SetActive(true);
     }
 

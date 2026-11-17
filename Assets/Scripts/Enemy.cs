@@ -61,6 +61,7 @@ public class Enemy : MonoBehaviour
     private Color dieColor = Color.white;
 
     private float hitFlashUntil;     // 受击闪白期间不被开火预警色覆盖
+    private float damageCarry;       // 未满 1 点的零散伤害（子弹 0.25，攒够 4 发才扣 1 血）
 
     private void Awake()
     {
@@ -125,6 +126,26 @@ public class Enemy : MonoBehaviour
             case Kind.Turret: UpdateTurret(); break;
             default: UpdateShooter(); break;
         }
+
+        // 接触伤害：所有敌人碰到玩家都扣血（不只冲锋怪）。
+        // 玩家侧有无敌帧兜底，多人同时贴身也不会一帧掉光。
+        TryContactDamage();
+    }
+
+    // 通用接触判定。射手/炮台体型小，判定半径按各自 scale 收紧，避免"看着没碰到却扣血"。
+    private void TryContactDamage()
+    {
+        if (!PlayerHealth.HasInstance || PlayerHealth.Instance.IsDead) return;
+        Vector3 target = PlayerHealth.Instance.transform.position;
+
+        // 玩家半宽约 0.31；敌人半宽按自身 scale 算（普通 0.31 / 快速 0.23 / 冲锋 0.30）
+        float halfW = 0.31f * Mathf.Max(0.6f, transform.localScale.x / 0.62f);
+        float reachX = 0.31f + halfW;
+        float reachY = 0.42f + 0.42f * Mathf.Max(0.6f, transform.localScale.y / 0.62f);
+
+        if (Mathf.Abs(target.x - transform.position.x) < reachX
+            && Mathf.Abs(target.y - transform.position.y) < reachY)
+            PlayerHealth.Instance.TakeDamage(1, TypeName);
     }
 
     // 死亡：先向外"撑"一下再缩没，配合淡出。比直接 SetActive(false) 好读很多。
@@ -210,10 +231,7 @@ public class Enemy : MonoBehaviour
         float y = baseY + Mathf.Sin(Time.time * 6f + bobOffset) * 0.12f;
         transform.position = new Vector3(x, y, transform.position.z);
 
-        // 接触判定按缩放后的体型收紧（玩家半宽约 0.31，冲锋怪半宽约 0.29）
-        bool sameHeight = Mathf.Abs(target.y - transform.position.y) < 0.72f;
-        if (sameHeight && Mathf.Abs(target.x - transform.position.x) < 0.62f)
-            PlayerHealth.Instance.TakeDamage(1, TypeName);
+        // 接触伤害已由 Update 末尾的 TryContactDamage 统一处理（所有敌人类型都有）
     }
 
     // 炮台：不移动，每轮打三发小角度散射
@@ -234,12 +252,22 @@ public class Enemy : MonoBehaviour
             EnemyBullet.Spawn(origin, origin + Rotate(toPlayer, i * 0.16f) * 3f, TypeName);
     }
 
-    public void Hit(Vector2 direction, int damage = 1)
+    public void Hit(Vector2 direction, float damage = 0.25f)
     {
         if (dying) return;                       // 死亡动画期间不再吃伤害，避免重复计数
 
-        hp -= Mathf.Max(1, damage);
+        // 累计零散伤害，攒够整数点才扣血（hp 仍是 int，HUD 和死亡判定都不用改）
+        damageCarry += Mathf.Max(0.01f, damage);
+        int whole = Mathf.FloorToInt(damageCarry);
+        if (whole > 0)
+        {
+            hp -= whole;
+            damageCarry -= whole;
+        }
         transform.position += (Vector3)(direction.normalized * knockback);
+
+        EnemyVisual vis = GetComponent<EnemyVisual>();
+        if (vis != null) vis.OnHit();
 
         if (sr != null) sr.color = Color.white;
         hitFlashUntil = Time.time + flashTime;
@@ -262,6 +290,7 @@ public class Enemy : MonoBehaviour
         else
         {
             HitFeedback.Play(HitFeedback.Feel.Hit);                 // 普通命中：轻抖，不卡帧
+            HitParticles.Spawn(transform.position, Color.white, 3); // 命中火花，让"打到了"看得见
         }
     }
 

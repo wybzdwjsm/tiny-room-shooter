@@ -35,6 +35,7 @@ public class Boss : MonoBehaviour
     }
 
     private int hp;
+    private float damageCarry;    // 零散伤害累积（子弹 0.25，攒够 4 发扣 1 血）
     private int maxHp;
     private SpriteRenderer sr;
     private Collider2D col;
@@ -261,11 +262,17 @@ public class Boss : MonoBehaviour
             PlayerHealth.Instance.TakeDamage(1, "Boss 冲撞");
     }
 
-    public void Hit(Vector2 direction, int damage = 1)
+    public void Hit(Vector2 direction, float damage = 0.25f)
     {
         if (state == State.Dead || state == State.Enter) return;
 
-        hp -= Mathf.Max(1, damage);
+        damageCarry += Mathf.Max(0.01f, damage);
+        int whole = Mathf.FloorToInt(damageCarry);
+        if (whole > 0)
+        {
+            hp -= whole;
+            damageCarry -= whole;
+        }
         StartCoroutine(FlashWhite());
         Flinch();                       // 受击抖一下，大 Boss 也要有"被打到"的实感
         HitParticles.Spawn(transform.position, CurrentColor, 3);

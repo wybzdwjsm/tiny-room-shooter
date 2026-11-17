@@ -7,7 +7,7 @@ public struct RunStats
 {
     public float fireRate;        // 发/秒
     public int bulletCount;       // 每次开火的弹丸数
-    public int bulletDamage;      // 每发伤害
+    public float bulletDamage;      // 每发伤害（0.25 = 原来的 1/4，命中 4 发才扣 1 点血）
     public float moveSpeedMul;    // 移速倍率
     public int maxHpBonus;        // 最大生命加成
     public int enemyHpBonus;      // 敌人血量加成（负值 = 更容易）
@@ -18,7 +18,7 @@ public struct RunStats
         {
             fireRate = 6f,
             bulletCount = 1,
-            bulletDamage = 1,
+            bulletDamage = 0.25f,
             moveSpeedMul = 1f,
             maxHpBonus = 0,
             enemyHpBonus = 0
