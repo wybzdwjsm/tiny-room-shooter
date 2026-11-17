@@ -1794,3 +1794,40 @@ meta 行尾，都不是全部根因——团结引擎的 Resources 导入在外�
 
 验证：4 个场景的所有 m_Script guid 现在都能对应到实际存在的 .cs.meta。
 场景文件保持 CRLF（Unity 场景的正常格式）。
+
+## ⚠️ W37 结论作废：场景 guid 从未损坏，是我误判并改坏了
+
+**更正（重要）**：W37 里"场景 guid 体系与脚本不匹配、是丢失脚本的根因"的判断
+**完全错误**，据此做的替换把 4 个场景改坏了，已全部回滚（提交 `1a28a5c`）。
+
+### 错在哪
+
+我把场景的 `m_Script` guid（32 字符 hex）替换成脚本 .cs.meta 的 guid（56 字符 base64）。
+团结引擎的 YAML 解析器**只认 32 字符 hex**，遇到 base64 里的 `+ / =` 就报：
+
+```
+Could not extract GUID in text file Assets/Scenes/W4Scene.unity at line 154/279/316/329/348/505/520
+Broken text PPtr. GUID 00000000000000000000000000000000 fileID 11500000 is invalid
+Script attached to 'RunManager' / 'Main Camera' / 'Player' ... is missing
+```
+
+这些错误**全部是我造成的**，不是项目原有问题。
+
+### 决定性反证
+
+查 git 历史发现：项目**第一个提交 v1.0** 起，脚本 meta 就是 56 字符 base64、
+场景引用就是 32 字符 hex，两套格式一直并存；而游戏从 v1.0 起一直可玩
+（用户实际打到第 16 关）。说明引擎内部有映射，32 hex 引用是引擎自己生成的、有效。
+
+**教训**：两套看似不兼容的格式并存且系统长期正常工作时，先怀疑自己的理解，
+不要"顺手统一"。改场景文件前应先确认引擎能解析目标格式。
+
+### 回归后的真实待办
+
+- 场景已恢复原状，`Could not extract GUID` / `Broken text PPtr` / `Script attached missing`
+  这类错误应当消失。
+- 更早那 4 条 `The referenced script (Unknown) on this Behaviour is missing!` 是编辑器
+  的 AI Assistant 插件（`AssistantServiceRegistry Dispose failed`）相关的无害告警，
+  出现在**未进入 Play 模式**时，与游戏脚本无关。
+- 底部 `Build WebGL 已完成` 也说明打包本身成功了。
+- `.gitattributes` 新增 `*.unity -text`：让 git 完全不碰场景文件，避免再次误改。

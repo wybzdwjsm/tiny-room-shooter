@@ -3,5 +3,8 @@
 *.meta text eol=lf
 *.cs text eol=lf
 *.asset text eol=lf
+# 场景文件是 Unity 原生 CRLF，且其 m_Script guid 必须保持引擎自己生成的 32 字符 hex。
+# 标为 -text 让 git 完全不碰它，避免 autocrlf 转换或人工重写再次破坏脚本引用。
+*.unity -text
 *.png binary
 *.zip binary
