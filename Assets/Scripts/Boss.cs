@@ -184,10 +184,11 @@ public class Boss : MonoBehaviour
 
         sr = GetComponent<SpriteRenderer>();
         col = GetComponent<Collider2D>();
-        // 有美术 = 当前贴图是 ArtStore 里加载的任意一张（原版或 4 种变体之一）
-        hasArt = sr != null && sr.sprite != null && ArtStore.IsBossSprite(sr.sprite);
-        // 专属贴图 = 不是原版 boss.png（有专属图就不叠 tint，显示原色）
-        hasVariantArt = hasArt && sr.sprite != ArtStore.Boss;
+        // 有美术 = 贴图是 ArtStore 加载的 或 BossArt 程序化生成的（不是兜底方块）
+        hasArt = sr != null && sr.sprite != null
+            && (ArtStore.IsBossSprite(sr.sprite) || ArtStore.IsVariantBossSprite(sr.sprite));
+        // 专属贴图（外部变体 或 程序化）：显示原色，不叠 tint
+        hasVariantArt = sr != null && ArtStore.IsVariantBossSprite(sr.sprite);
         if (sr != null) sr.color = CurrentColor;
 
         state = State.Enter;

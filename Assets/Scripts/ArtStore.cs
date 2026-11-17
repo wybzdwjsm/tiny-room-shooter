@@ -25,13 +25,26 @@ public static class ArtStore
     public static Sprite Turret { get { Ensure(); return turret; } }
     public static Sprite Boss { get { Ensure(); return boss; } }
 
-    // 按 Boss 类型取贴图；缺图时退回原版 boss.png（不会白屏）
+    // 按 Boss 类型取贴图。
+    // 优先用 Resources 里的外部专属图；若加载失败（Unity 导入问题），
+    // 退回 BossArt 程序化生成的 4 种贴图——保证 4 个 Boss 外观一定不同，绝不再出现纯色方块。
     public static Sprite BossFor(int kindIndex)
     {
         Ensure();
         if (kindIndex >= 0 && kindIndex < bossVariants.Length && bossVariants[kindIndex] != null)
             return bossVariants[kindIndex];
-        return boss;
+        return BossArt.Get(kindIndex);
+    }
+
+    // 是否专属 Boss 贴图（外部变体 或 程序化生成）——用于决定显示原色还是叠 tint
+    public static bool IsVariantBossSprite(Sprite s)
+    {
+        if (s == null) return false;
+        for (int i = 0; i < 4; i++)
+            if (s == BossArt.Get(i)) return true;
+        for (int i = 0; i < bossVariants.Length; i++)
+            if (bossVariants[i] != null && s == bossVariants[i]) return true;
+        return false;
     }
 
     // 判断某个 Sprite 是不是我们加载的 Boss 美术（原版或 4 种变体），用于 Boss 的有图/无图分支
@@ -62,10 +75,25 @@ public static class ArtStore
         charger = Load("charger");
         turret = Load("turret");
         boss = Load("boss");                       // 原版兜底
-        bossVariants[0] = Load("boss_tideeye");
-        bossVariants[1] = Load("boss_spore");
-        bossVariants[2] = Load("boss_spear");
-        bossVariants[3] = Load("boss_abyss");
+
+        // 外部专属图：尝试加载但静默失败（加载不了就用 BossArt 程序化贴图）。
+        // 之前反复出现"未找到"警告是因为 Unity 导入 meta 的问题，现在有兜底就不再吵用户。
+        bossVariants[0] = LoadQuiet("boss_tideeye");
+        bossVariants[1] = LoadQuiet("boss_spore");
+        bossVariants[2] = LoadQuiet("boss_spear");
+        bossVariants[3] = LoadQuiet("boss_abyss");
+    }
+
+    // 静默版加载：失败只返回 null，不打印警告
+    private static Sprite LoadQuiet(string name)
+    {
+        Texture2D tex = Resources.Load<Texture2D>("Art/" + name);
+        if (tex == null) return null;
+        float ppu = (tex.width > 0 ? tex.width / 1f : PPU) / ART_FILL;
+        Sprite s = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+            new Vector2(0.5f, 0.5f), ppu, 0u, SpriteMeshType.FullRect);
+        s.name = "art_" + name;
+        return s;
     }
 
     private static Sprite Load(string name)
