@@ -1,5 +1,25 @@
 using UnityEngine;
 
+// 轻量弹簧：给动画量（压扁/后坐/倾斜）提供惯性和回弹。
+// 直接内联在这个文件里，而不是单独建 Spring.cs ——
+// 单独文件曾因 meta 没被 Unity 导入而导致 CS0246「Spring 找不到」。
+// struct 是值类型，零 GC；阻尼略小于临界值时动作会轻微超调再收回，才像有质量。
+public struct Spring
+{
+    public float value;
+    public float velocity;
+
+    public void Kick(float impulse) { velocity += impulse; }
+
+    public void Step(float target, float stiffness, float damping, float dt)
+    {
+        if (dt > 0.04f) dt = 0.04f;              // 卡顿时防止数值爆炸
+        float accel = (target - value) * stiffness - velocity * damping;
+        velocity += accel * dt;
+        value += velocity * dt;
+    }
+}
+
 // 玩家视觉层：本体精灵 + 描边 + 眼睛 + 程序化动画，全部挂在 Visual 子节点下。
 //
 // 为什么必须放在子节点：根节点的 transform 上有 BoxCollider2D 和 Rigidbody2D，
