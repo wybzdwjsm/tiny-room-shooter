@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v2.4";
+    public const string BuildTag = "v2.5";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -504,7 +504,8 @@ public class RunManager : MonoBehaviour
         go.transform.position = from;
         go.transform.localScale = Vector3.one * 0.5f;
         SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = ArtStore.Boss ?? enemySprite;
+        // 按 Boss 类型选专属贴图（缺图自动退回原版 boss.png）
+        sr.sprite = ArtStore.BossFor((int)kind) ?? enemySprite;
         sr.color = Color.white;
         sr.sortingOrder = 6;
         go.AddComponent<BoxCollider2D>();

@@ -38,13 +38,13 @@ public class Boss : MonoBehaviour
     private static readonly Spec[] Specs =
     {
         // TideEye：原版，扇形 + 冲撞
-        new Spec("潮眼", new Color(1f, 0.95f, 0.95f), 1.00f, 1.0f, 1.0f, 1.0f, 3, false, false, 0.5f),
+        new Spec("潮眼", new Color(1f, 0.95f, 0.95f), 1.15f, 1.0f, 1.0f, 1.0f, 3, false, false, 0.5f),
         // Spore：紫色，环形弹幕，慢漂移但冲撞范围大
-        new Spec("孢潮", new Color(0.72f, 0.55f, 1f), 1.12f, 0.7f, 0.8f, 1.0f, 5, true,  false, 0.45f),
+        new Spec("孢潮", new Color(0.72f, 0.55f, 1f), 1.28f, 0.7f, 0.8f, 1.0f, 5, true,  false, 0.45f),
         // Spear：青色，小而快，窄扇 + 高频冲撞
-        new Spec("裂鳍", new Color(0.45f, 1f, 0.92f), 0.88f, 1.5f, 1.4f, 0.65f, 2, false, false, 0.4f),
+        new Spec("裂鳍", new Color(0.45f, 1f, 0.92f), 1.02f, 1.5f, 1.4f, 0.65f, 2, false, false, 0.4f),
         // Abyss：深红，最大，双扇形 + 冲撞，最早狂暴
-        new Spec("深渊之瞳", new Color(1f, 0.5f, 0.42f), 1.28f, 1.2f, 1.15f, 0.9f, 4, false, true, 0.55f),
+        new Spec("深渊之瞳", new Color(1f, 0.5f, 0.42f), 1.45f, 1.2f, 1.15f, 0.9f, 4, false, true, 0.55f),
     };
 
     private Spec spec { get { return Specs[(int)kind]; } }
@@ -53,7 +53,22 @@ public class Boss : MonoBehaviour
     public Kind Type { get { return kind; } }
     public string TypeName { get { return spec.name; } }
 
-    private enum State { Enter, Idle, Telegraph, Burst, Charge, Recover, Dead }
+    private enum State { Enter, Idle, Telegraph, Burst, Charge, Recover, Dead,
+        InvincibleRain, LaserCharge, LaserFire, WallBarrage }
+    private enum Attack { Fan, Charge, Rain, Laser, Wall }
+
+    // 每种 Boss 的攻击池（轮转使用）。原版只会扇形/冲撞，新 Boss 有专属大招。
+    private static readonly Attack[][] AttackPools =
+    {
+        // TideEye 潮眼：原版两招 + 全屏弹幕
+        new[] { Attack.Fan, Attack.Charge, Attack.Wall, Attack.Fan, Attack.Charge },
+        // Spore 孢潮：环形 + 酸雨（"孢潮"从天上撒孢子）
+        new[] { Attack.Fan, Attack.Rain, Attack.Wall, Attack.Fan, Attack.Rain },
+        // Spear 裂鳍：高频冲撞 + 激光
+        new[] { Attack.Charge, Attack.Laser, Attack.Fan, Attack.Charge, Attack.Laser },
+        // Abyss 深渊之瞳：全部招式都会
+        new[] { Attack.Fan, Attack.Wall, Attack.Laser, Attack.Rain, Attack.Charge },
+    };
 
     [SerializeField] private float driftSpeed = 1.1f;
     [SerializeField] private float chargeSpeed = 9f;
@@ -105,17 +120,22 @@ public class Boss : MonoBehaviour
     private float flinch;              // 受击/阶段转换的短暂抖动，0~1
     private float chargeTrailTimer;    // 冲撞残影节流
     private float telegraphRingTimer;  // 蓄力光环节流
+    private int attackCursor;          // 当前攻击池轮转到的位置
+    private Attack pendingAttack;      // 蓄力结束后要执行的招式
+    private float actionTimer;         // 大招内部计时（酸雨间隔 / 激光持续）
+    private float laserY;              // 激光锁定的高度
+    private bool invincible;           // 酸雨阶段无敌（打不动）
 
     public int Hp { get { return hp; } }
     public int MaxHp { get { return maxHp; } }
     public bool Alive { get { return state != State.Dead; } }
     public bool Enraged { get { return enraged; } }
 
-    // 二阶段：预警更短、间隔更小、冲得更快。数值下降但都还在"能反应"的范围内。
-    private float TelegraphTime { get { return enraged ? 0.34f : 0.5f; } }
-    private float IdleTime { get { return enraged ? 0.70f : 1.1f; } }
-    private float RecoverBurst { get { return enraged ? 0.30f : 0.45f; } }
-    private float RecoverCharge { get { return enraged ? 0.45f : 0.70f; } }
+    // 攻击欲望：idle 和硬直都缩短，攻击更密集（数值仍留反应窗口）
+    private float TelegraphTime { get { return enraged ? 0.30f : 0.42f; } }
+    private float IdleTime { get { return enraged ? 0.45f : 0.70f; } }
+    private float RecoverBurst { get { return enraged ? 0.22f : 0.34f; } }
+    private float RecoverCharge { get { return enraged ? 0.32f : 0.50f; } }
     private float DriftSpeed { get { return driftSpeed * spec.driftMul * (enraged ? 1.4f : 1f); } }
     private float ChargeSpeed { get { return chargeSpeed * spec.chargeMul * (enraged ? 1.2f : 1f); } }
 
@@ -133,10 +153,14 @@ public class Boss : MonoBehaviour
         flinch = 0f;
         chargeTrailTimer = 0f;
         telegraphRingTimer = 0f;
+        attackCursor = 0;
+        actionTimer = 0f;
+        invincible = false;
 
         sr = GetComponent<SpriteRenderer>();
         col = GetComponent<Collider2D>();
-        hasArt = sr != null && sr.sprite != null && ArtStore.Boss != null && sr.sprite == ArtStore.Boss;
+        // 有美术 = 当前贴图是 ArtStore 里加载的任意一张（原版或 4 种变体之一）
+        hasArt = sr != null && sr.sprite != null && ArtStore.IsBossSprite(sr.sprite);
         if (sr != null) sr.color = CurrentColor;
 
         state = State.Enter;
@@ -166,6 +190,10 @@ public class Boss : MonoBehaviour
             case State.Telegraph: UpdateTelegraph(); break;
             case State.Charge: UpdateCharge(); break;
             case State.Recover: UpdateRecover(); break;
+            case State.InvincibleRain: UpdateRain(); break;
+            case State.LaserCharge: UpdateLaserCharge(); break;
+            case State.LaserFire: UpdateLaserFire(); break;
+            case State.WallBarrage: UpdateWallBarrage(); break;
         }
     }
 
@@ -242,16 +270,44 @@ public class Boss : MonoBehaviour
         if (sr != null) sr.color = CurrentColor;
         ApplyVisualScale(BossScale);
 
-        // 交替出招：弹幕 → 冲撞 → 弹幕 …
-        alternate = !alternate;
-        if (alternate)
+        // 按该 Boss 的攻击池轮转选招（不再是简单的弹幕/冲撞交替）
+        Attack[] pool = AttackPools[(int)kind];
+        pendingAttack = pool[attackCursor % pool.Length];
+        attackCursor++;
+
+        ExecuteAttack(pendingAttack);
+    }
+
+    // 蓄力结束后进入对应招式的执行状态
+    private void ExecuteAttack(Attack atk)
+    {
+        switch (atk)
         {
-            FireFan();
-            EnterState(State.Recover, RecoverBurst);
-        }
-        else
-        {
-            EnterState(State.Charge, enraged ? 0.7f : 0.85f);
+            case Attack.Fan:
+                FireFan();
+                EnterState(State.Recover, RecoverBurst);
+                break;
+            case Attack.Charge:
+                EnterState(State.Charge, enraged ? 0.7f : 0.85f);
+                break;
+            case Attack.Rain:
+                // 酸雨：先进入无敌，Boss 悬停不动开始下酸雨
+                invincible = true;
+                actionTimer = 0f;
+                EnterState(State.InvincibleRain, enraged ? 3.2f : 2.6f);
+                GameAudio.Play(GameAudio.Sfx.Wave);
+                break;
+            case Attack.Laser:
+                // 激光：锁定玩家当前高度，长蓄力后射出
+                laserY = PlayerHealth.Instance.transform.position.y;
+                actionTimer = 0f;
+                EnterState(State.LaserCharge, enraged ? 1.1f : 1.5f);
+                break;
+            case Attack.Wall:
+                // 全屏弹幕墙：一次性铺满留缝
+                FireWall();
+                EnterState(State.WallBarrage, 0.5f);
+                break;
         }
     }
 
@@ -276,6 +332,114 @@ public class Boss : MonoBehaviour
 
         // 撞到边界或时间到了就收手
         if (stateTimer <= 0f || Mathf.Abs(x) >= limit) EnterState(State.Recover, RecoverCharge);
+    }
+
+    // —— 新招 1：无敌 + 天降酸雨 ——
+    private void UpdateRain()
+    {
+        Drift();                                    // 悬停漂移，但此时打不动
+        ApplyVisualScale(BossScale * 1.06f);
+
+        // 视觉： Boss 上方持续冒紫色粒子，提示"正在降下什么"
+        if (sr != null) sr.color = Color.Lerp(CurrentColor, new Color(0.8f, 0.4f, 1f),
+            0.5f + Mathf.Sin(Time.time * 14f) * 0.3f);
+
+        actionTimer -= Time.deltaTime;
+        if (actionTimer <= 0f)
+        {
+            actionTimer = enraged ? 0.22f : 0.32f;
+            // 在房间范围的随机 x 位置从天上生成一滴酸雨，从上往下落
+            float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
+            float x = Mathf.Lerp(-limit, limit, (float)rainRandom());
+            // 相机视野约 y=-6.8~6.8，从顶部 7 落到地板下 -5
+            Vector2 from = new Vector2(x, 7f);
+            Vector2 to = new Vector2(x, -5f);
+            EnemyBullet.Spawn(from, to, "酸雨");
+        }
+
+        if (stateTimer <= 0f)
+        {
+            invincible = false;
+            if (sr != null) sr.color = CurrentColor;
+            EnterState(State.Recover, RecoverBurst);
+        }
+    }
+
+    // 确定性伪随机（不引入新 Random 源，保护 seed 复现）
+    private float rainRandom()
+    {
+        rainSeed = rainSeed * 0.6180339887f + 0.31415926f;
+        rainSeed -= Mathf.Floor(rainSeed);
+        return rainSeed;
+    }
+    private float rainSeed = 0.37f;
+
+    // —— 新招 2：长蓄力大激光 ——
+    private void UpdateLaserCharge()
+    {
+        // 蓄力期间 Boss 定住，锁定高度越来越亮的光环
+        ApplyVisualScale(BossScale * (1f + (1f - stateTimer / Mathf.Max(0.01f, stateDuration)) * 0.14f));
+        telegraphRingTimer -= Time.deltaTime;
+        if (telegraphRingTimer <= 0f)
+        {
+            telegraphRingTimer = 0.1f;
+            FxRings.Land(new Vector2(transform.position.x, laserY), 0.4f);
+        }
+        if (sr != null) sr.color = Mathf.Repeat(Time.time * 18f, 1f) > 0.5f
+            ? new Color(1f, 0.3f, 0.3f) : CurrentColor;
+
+        if (stateTimer <= 0f)
+        {
+            if (sr != null) sr.color = CurrentColor;
+            FireLaserVolley();
+            EnterState(State.LaserFire, enraged ? 0.55f : 0.4f);
+            HitFeedback.Play(HitFeedback.Feel.Kill);
+        }
+    }
+
+    private void UpdateLaserFire()
+    {
+        ApplyVisualScale(BossScale * 1.1f);
+        if (stateTimer <= 0f) EnterState(State.Recover, RecoverCharge);
+    }
+
+    // 激光弹幕：沿锁定高度一整排密集子弹，留几个缺口让玩家躲
+    private void FireLaserVolley()
+    {
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
+        const int beams = 24;
+        for (int i = 0; i < beams; i++)
+        {
+            // 留 3 个大缺口（相邻两发不发），缝隙足够玩家通过
+            if (i % 8 == 3 || i % 8 == 4) continue;
+            float x = Mathf.Lerp(-limit, limit, i / (float)(beams - 1));
+            EnemyBullet.Spawn(new Vector2(x, laserY + 0.02f),
+                new Vector2(x, laserY - 3f), "激光");
+        }
+    }
+
+    // —— 新招 3：全屏弹幕墙，留一个大缝隙 ——
+    private void FireWall()
+    {
+        float limit = Mathf.Max(3f, RunManager.RoomRight - 1f);
+        Vector2 origin = transform.position;
+        // 一道横贯全场的弹幕墙，朝玩家方向推进；中间 3 格留空 = 大缝隙
+        const int cols = 16;
+        int gapCenter = Mathf.Clamp(PlayerHealth.Instance.transform.position.x > 0
+            ? cols - 5 : 4, 2, cols - 3);   // 缝隙开在玩家侧，但留一点距离需要走位
+        for (int i = 0; i < cols; i++)
+        {
+            if (Mathf.Abs(i - gapCenter) <= 1) continue;   // 3 格宽的大缝隙
+            float x = Mathf.Lerp(-limit, limit, i / (float)(cols - 1));
+            Vector2 from = new Vector2(x, origin.y);
+            EnemyBullet.Spawn(from, from + Vector2.down * 3f, "弹幕墙");
+        }
+    }
+
+    private void UpdateWallBarrage()
+    {
+        ApplyVisualScale(BossScale);
+        if (stateTimer <= 0f) EnterState(State.Recover, RecoverBurst);
     }
 
     private void UpdateRecover()
@@ -349,6 +513,12 @@ public class Boss : MonoBehaviour
     public void Hit(Vector2 direction, float damage = 0.25f)
     {
         if (state == State.Dead || state == State.Enter) return;
+        if (invincible)
+        {
+            // 酸雨阶段无敌：弹开但不受伤，给玩家明确反馈
+            HitParticles.Spawn(transform.position, new Color(0.8f, 0.5f, 1f), 2);
+            return;
+        }
 
         damageCarry += Mathf.Max(0.01f, damage);
         int whole = Mathf.FloorToInt(damageCarry);

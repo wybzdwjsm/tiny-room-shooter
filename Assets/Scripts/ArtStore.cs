@@ -15,6 +15,8 @@ public static class ArtStore
     private const float ART_FILL = 1.35f;
 
     private static Sprite player, shooter, charger, turret, boss;
+    // 4 种 Boss 的专属贴图（按 Boss.Kind 顺序：TideEye/Spore/Spear/Abyss）
+    private static Sprite[] bossVariants = new Sprite[4];
     private static bool tried;
 
     public static Sprite Player { get { Ensure(); return player; } }
@@ -22,6 +24,26 @@ public static class ArtStore
     public static Sprite Charger { get { Ensure(); return charger; } }
     public static Sprite Turret { get { Ensure(); return turret; } }
     public static Sprite Boss { get { Ensure(); return boss; } }
+
+    // 按 Boss 类型取贴图；缺图时退回原版 boss.png（不会白屏）
+    public static Sprite BossFor(int kindIndex)
+    {
+        Ensure();
+        if (kindIndex >= 0 && kindIndex < bossVariants.Length && bossVariants[kindIndex] != null)
+            return bossVariants[kindIndex];
+        return boss;
+    }
+
+    // 判断某个 Sprite 是不是我们加载的 Boss 美术（原版或 4 种变体），用于 Boss 的有图/无图分支
+    public static bool IsBossSprite(Sprite s)
+    {
+        Ensure();
+        if (s == null) return false;
+        if (s == boss) return true;
+        for (int i = 0; i < bossVariants.Length; i++)
+            if (s == bossVariants[i]) return true;
+        return false;
+    }
 
     // 判断某个 SpriteRenderer 用的是不是我们加载的美术（而不是兜底的纯色方块）
     public static bool IsEnemySprite(Sprite s)
@@ -39,7 +61,11 @@ public static class ArtStore
         shooter = Load("shooter");
         charger = Load("charger");
         turret = Load("turret");
-        boss = Load("boss");
+        boss = Load("boss");                       // 原版兜底
+        bossVariants[0] = Load("boss_tideeye");
+        bossVariants[1] = Load("boss_spore");
+        bossVariants[2] = Load("boss_spear");
+        bossVariants[3] = Load("boss_abyss");
     }
 
     private static Sprite Load(string name)
