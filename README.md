@@ -1765,3 +1765,32 @@ meta 行尾，都不是全部根因——团结引擎的 Resources 导入在外�
 - 全程无敌，逼走位不硬拼；3~4 波
 
 既有唯一解（公平），压迫感又足。
+
+## W37：修复场景里 7 个丢失脚本引用（v2.9 续）
+
+### 根因：场景 guid 体系与脚本不匹配
+
+截图 Console 有 4+ 条 `The referenced script (Unknown) on this Behaviour is missing!`。
+排查发现 **W4Scene 里 7 个 MonoBehaviour 的脚本 guid 全是 32 字符十六进制**
+（如 `6d388230...`），而项目脚本 meta 的 guid 是 **56 字符 base64**
+（如 `CS4cvSKvUHt+...`）——两套体系对不上。场景应是从标准 Unity 项目复制、
+脚本后来用团结引擎重建，guid 全变了。
+
+按组件字段反推对应关系并替换（4 个场景全修）：
+
+| 原 guid（旧） | 挂载对象 | 关键字段 | 修复为 |
+| --- | --- | --- | --- |
+| 6d388230… | RunManager | roomCount, seedOverride | RunManager.cs |
+| e8f6a987… | Main Camera | （空） | Ambience.cs |
+| c2e656d4… | Player | stats | PlayerHealth.cs |
+| cb961041… | Player | stats, input, groundMask | PlayerMotor.cs |
+| f0ef64a6… | Player | （空） | InputReader.cs |
+| a5709e4c… | Player | poolSize, fireRate, muzzleOffset | Weapon.cs |
+| 054b231f… | Player | sampleInterval, window, exportKey | JumpCurveRecorder.cs |
+
+**这很可能就是"小怪卡住/剩余1找不到"的真正根因**：场景里 Player 的 Weapon / InputReader
+等组件脚本丢失，导致射击逻辑异常、敌人打不掉。之前游戏能跑是编辑器内存缓存了旧映射，
+重启编辑器后才会暴露 missing 警告。
+
+验证：4 个场景的所有 m_Script guid 现在都能对应到实际存在的 .cs.meta。
+场景文件保持 CRLF（Unity 场景的正常格式）。
