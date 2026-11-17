@@ -3,7 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-// 一局生命周期：标题 -> 3 波敌人 -> 每波清场三选一 -> 结算(胜/败) -> 重开。
+// 一局生命周期：标题 -> 20 波（4 章，每章末 Boss）-> 每波清场三选一 -> 结算(胜/败) -> 重开。
 // 所有随机（平台布局、敌人位置、敌人类型、词条抽取）都走同一个 System.Random(seed)，
 // 绝不混用 UnityEngine.Random，这样同 seed 能完整复现。
 //
@@ -13,12 +13,18 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v1.5";
+    public const string BuildTag = "v2.0";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
-    // 两种玩法：标准（3 波 + Boss，有明确终点）与无尽（一波接一波，每 5 波一个 Boss）
+    // 两种玩法：
+    //   标准 —— 4 章 × 5 波 = 20 波，每章末尾一个 Boss，打完第 4 个 Boss 通关（有明确终点）
+    //   无尽 —— 一波接一波，每 5 波一个 Boss，永不结束，比拼最远记录
     public enum Mode { Standard, Endless }
+
+    // 章节结构：每 5 波一章，标准模式共 4 章
+    private const int WavesPerChapter = 5;
+    private const int StandardChapters = 4;
 
     public static RunManager Instance { get; private set; }
     public static bool HasInstance => Instance != null;
@@ -44,21 +50,13 @@ public class RunManager : MonoBehaviour
     // 平台和敌人之间的空隙也更好读。敌人用同一系数，保持体型关系不变。
     private const float CharacterScale = 0.62f;
 
-    [SerializeField] private int roomCount = 3;
+    // 标准模式总波数由章节数算出（4×5=20），不用 SerializeField，避免 Inspector 残留旧值 3
+    private int roomCount { get { return WavesPerChapter * StandardChapters; } }
     [SerializeField] private int seedOverride = 0;   // 填非 0 可固定 seed 复现
 
-    // 难度曲线：每波的敌人数量、基础血量、类型权重（普通 / 快速 / 冲锋 / 炮台，剩余给精英）
-    // 第 1 波只出普通怪练手，第 2 波引入快速怪与冲锋怪，第 3 波才有炮台和精英。
-    // 这张表只服务标准模式；无尽模式用下面 WaveSpecFor 里的公式，避免表越写越长。
-    private static readonly int[] WaveCount = { 2, 3, 4 };
-    private static readonly int[] WaveHp = { 2, 3, 4 };
-    private static readonly int[] WaveNormal = { 100, 45, 30 };
-    private static readonly int[] WaveFast = { 0, 30, 20 };
-    private static readonly int[] WaveCharger = { 0, 25, 20 };
-    private static readonly int[] WaveTurret = { 0, 0, 15 };
+    // 难度曲线写在 WaveSpecFor 里：标准模式按章节递增，无尽模式按波数公式递增。
 
-    // 无尽模式：每 5 波一个 Boss（第 5、10、15… 波）
-    private const int BossEvery = 5;
+    // 无尽模式：每 5 波一个 Boss——统一用 WavesPerChapter
 
     // 敌人入场：每只随机飞 1.1~1.7 秒，彼此错开 0.12 秒逐个进场
     private const float IntroMin = 1.1f;
@@ -75,15 +73,10 @@ public class RunManager : MonoBehaviour
     private Mode mode = Mode.Standard;
     private bool victory;
 
-    // 是否 Boss 波：标准模式最后一波，无尽模式每 BossEvery 波
+    // 是否 Boss 波：两种模式都是每 5 波一个（第 5、10、15、20 波）
     private bool IsBossWave
     {
-        get
-        {
-            return mode == Mode.Standard
-                ? roomIndex >= roomCount - 1
-                : (roomIndex + 1) % BossEvery == 0;
-        }
+        get { return (roomIndex + 1) % WavesPerChapter == 0; }
     }
 
     // 第 index 波（从 0 开始）的敌人配置。标准模式查表，无尽模式按公式递增。
@@ -92,13 +85,18 @@ public class RunManager : MonoBehaviour
     {
         if (mode == Mode.Standard)
         {
-            int i = Mathf.Clamp(index, 0, WaveCount.Length - 1);
-            count = WaveCount[i];
-            hp = WaveHp[i];
-            wNormal = WaveNormal[i];
-            wFast = WaveFast[i];
-            wCharger = WaveCharger[i];
-            wTurret = WaveTurret[i];
+            // 按章节递增：chapter=第几章(0~3)，local=章内第几波(0~4)。
+            // 每过一章数量+1、血量+2，并逐章解锁更强类型；章内小幅爬升。
+            int chapter = index / WavesPerChapter;
+            int local = index % WavesPerChapter;
+
+            count = Mathf.Clamp(2 + chapter + local / 2, 2, 7);
+            hp = Mathf.Clamp(2 + chapter * 2 + local / 2, 2, 12);
+
+            wTurret = chapter >= 2 ? Mathf.Min(20, 6 + chapter * 4 + local) : 0;
+            wCharger = chapter >= 1 ? Mathf.Min(28, 12 + chapter * 5 + local) : 0;
+            wFast = Mathf.Min(32, (chapter == 0 ? local * 6 : 16 + chapter * 4 + local));
+            wNormal = Mathf.Max(12, 100 - wFast - wCharger - wTurret);
             return;
         }
 
@@ -342,13 +340,17 @@ public class RunManager : MonoBehaviour
         if (PlayerHealth.HasInstance) PlayerHealth.Instance.ResetHealth();
     }
 
-    // HUD 与横幅共用的波次标签：标准模式带总数，无尽模式只显示已到达
+    // HUD 与横幅共用的波次标签
     private string WaveLabel()
     {
         int n = roomIndex + 1;
-        return mode == Mode.Standard
-            ? "第 " + n + " 次涨潮 · 共 " + roomCount
-            : "第 " + n + " 次涨潮 · 无尽";
+        if (mode == Mode.Endless)
+            return "第 " + n + " 次涨潮 · 无尽";
+
+        int chapter = roomIndex / WavesPerChapter + 1;
+        int toBoss = WavesPerChapter - (roomIndex % WavesPerChapter);
+        string tail = IsBossWave ? "· 潮眼之夜" : "· " + toBoss + " 波后潮眼苏醒";
+        return "第 " + chapter + " 夜 · 第 " + n + "/" + roomCount + " 波 " + tail;
     }
 
     // 暂停菜单用：当前模式与进度
@@ -357,9 +359,13 @@ public class RunManager : MonoBehaviour
         get
         {
             if (Instance == null) return "";
-            return Instance.mode == Mode.Standard
-                ? "标准模式 · 第 " + (Instance.roomIndex + 1) + " / " + Instance.roomCount + " 波"
-                : "无尽模式 · 第 " + (Instance.roomIndex + 1) + " 波";
+            if (Instance.mode == Mode.Standard)
+            {
+                int chapter = Instance.roomIndex / WavesPerChapter + 1;
+                return "标准模式 · 第 " + chapter + "/" + StandardChapters + " 夜 · 第 "
+                    + (Instance.roomIndex + 1) + "/" + Instance.roomCount + " 波";
+            }
+            return "无尽模式 · 第 " + (Instance.roomIndex + 1) + " 波";
         }
     }
 
@@ -379,7 +385,7 @@ public class RunManager : MonoBehaviour
         // 一旦 timeScale = 0，Unity 会认为编辑器进入暂停态，暂停键亮起、Game 视图失焦。
         spawning = true;
         flashTimer = 0.26f;                            // 开场闪白：让"新一波开始"有个明确的信号
-        if (IsBossWave) SpawnBoss();                   // 标准：最后一波；无尽：每 BossEvery 波
+        if (IsBossWave) SpawnBoss();                   // 每 5 波一个 Boss（两种模式一致）
         else SpawnRoom();
     }
 
@@ -401,8 +407,9 @@ public class RunManager : MonoBehaviour
         go.AddComponent<BoxCollider2D>();
 
         Boss boss = go.AddComponent<Boss>();
-        // 无尽模式里 Boss 会反复出现，所以血量按"第几个 Boss"往上加，不然第 10 波和第 5 波一样好打
-        int bossIndex = mode == Mode.Endless ? roomIndex / BossEvery : 0;
+        // 第几个 Boss：两种模式都按章节递增（第 5 波=0，第 10 波=1…），
+        // 不然第 4 章的 Boss 和第 1 章一样好打，通关就没有成长的读数了
+        int bossIndex = roomIndex / WavesPerChapter;
         int hp = 30 + bossIndex * 12 + Mathf.RoundToInt(stats.enemyHpBonus) * 3;
         boss.Init(hp, 1.6f, from, to);
 
@@ -414,19 +421,23 @@ public class RunManager : MonoBehaviour
         if (Boss.Instance != null) Boss.Instance.Despawn();
     }
 
-    // 由 Boss 在血量归零时调用。标准模式赢下 Boss 即通关；无尽模式里 Boss 只是"第 5n 波"，
-    // 打完继续，并且额外回 1 血当作阶段奖励。
+    // 由 Boss 在血量归零时调用。
+    // 标准模式：前 3 个 Boss 打完继续下一章（回血+三选一），第 4 个才通关；
+    // 无尽模式：Boss 只是"第 5n 波"，打完继续回血，永远不通关。
     public void BossDefeated()
     {
         if (phase != Phase.Playing) return;
 
-        if (mode == Mode.Standard)
+        int bossIndex = roomIndex / WavesPerChapter;
+        bool isFinalBoss = mode == Mode.Standard && bossIndex >= StandardChapters - 1;
+
+        if (isFinalBoss)
         {
             Finish(true);
             return;
         }
 
-        if (PlayerHealth.HasInstance) PlayerHealth.Instance.Heal(1);
+        if (PlayerHealth.HasInstance) PlayerHealth.Instance.Heal(2);   // 章节奖励回 2 血
         GameAudio.Play(GameAudio.Sfx.Upgrade);
         ShowBanner(Story.BossDefeated);
         OfferChoices();
@@ -634,10 +645,10 @@ public class RunManager : MonoBehaviour
         WaveSpecFor(roomIndex, out count, out waveHp, out wNormal, out wFast, out wCharger, out wTurret);
         int baseHp = Mathf.Max(1, waveHp + stats.enemyHpBonus);
 
-        // 无尽模式里敌人的开火节奏也随波数收紧（最快到 65%，再往下就变成纯弹幕，没有走位空间了）
-        float paceScale = mode == Mode.Endless
-            ? Mathf.Max(0.65f, 1f - roomIndex * 0.02f)
-            : 1f;
+        // 开火节奏随进度收紧（最快 65%，再快就是纯弹幕）。标准按章节 -6%，无尽按波 -2%
+        float paceScale = mode == Mode.Standard
+            ? Mathf.Max(0.65f, 1f - (roomIndex / WavesPerChapter) * 0.06f)
+            : Mathf.Max(0.65f, 1f - roomIndex * 0.02f);
 
         float maxEnd = 0f;   // 最后一只的落地时刻（延迟 + 飞行）
 
@@ -824,6 +835,10 @@ public class RunManager : MonoBehaviour
     {
         string text = IsBossWave ? Story.BossWave : Story.WaveBanner(roomIndex);
 
+        // 标准模式每章第一波用章节横幅点出"进入新大关"；Boss 波不受影响
+        if (mode == Mode.Standard && !IsBossWave && roomIndex % WavesPerChapter == 0)
+            text = Story.ChapterBanner(roomIndex / WavesPerChapter);
+
         // 无尽模式第一次超过历史最远波数，给一次明确的"破纪录"时刻；
         // 只在刚开始超过时提示一次，之后每波都提示就变成噪音了。
         if (mode == Mode.Endless && !beatRecordShown && GameSettings.BestWave > 0
@@ -913,7 +928,7 @@ public class RunManager : MonoBehaviour
         GameAudio.SetMusicFocus(win ? 0.9f : 0.35f);
 
         // 战绩入档：击杀 / 通关时间 / 到达波数。
-        // 波数只在无尽模式记录——标准模式最多 3 波，混进"最远波数"会让无尽模式的纪录失去意义。
+        // 波数只在无尽模式记录——标准模式固定 20 波，混进"最远波数"会让无尽模式的纪录失去意义。
         float elapsed = Time.unscaledTime - runStart;
         GameSettings.SubmitRun(killCount, win ? elapsed : 0f,
             mode == Mode.Endless ? roomIndex + 1 : 0);

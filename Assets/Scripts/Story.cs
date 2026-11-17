@@ -2,7 +2,8 @@
 //
 // 一句话设定：世界被「潮」淹了，你是最后一个守灯人。
 // 灯是唯一的光，「蚀」从黑暗里涌进来；每涨一次潮，它们就更凶一点。
-// 三次涨潮之后，「潮眼」会醒。灯灭之后，你还在挥拳 —— 那就是无尽模式。
+// 每五次涨潮，「潮眼」会醒一次；打退四次潮眼才算守住这一夜。
+// 灯灭之后，你还在挥拳 —— 那就是无尽模式。
 
 public static class Story
 {
@@ -14,13 +15,13 @@ public static class Story
     {
         "灯油只剩一夜。",
         "你是最后一个守灯人，城里的人早就走了。",
-        "撑过三次涨潮 —— 或者，一直撑下去。"
+        "四次潮眼苏醒之前撑住 —— 或者，一直撑下去。"
     };
 
-    public const string PlayStandard = "守夜 · 三次涨潮（空格）";
+    public const string PlayStandard = "守夜 · 四夜潮眼（空格）";
     public const string PlayEndless = "灯灭之后 · 无尽（E）";
 
-    public const string HintStandard = "三次涨潮之后，潮眼会醒。";
+    public const string HintStandard = "四次涨潮、四次潮眼。撑到最后的灯，才算守住。";
     public const string HintEndless = "没有尽头。每五次涨潮，潮眼苏醒一次。";
 
     // 波次横幅：标准模式用"第几次涨潮"，无尽模式一直数下去
@@ -39,6 +40,18 @@ public static class Story
 
     public const string BossWave = "潮眼苏醒";
     public const string BossDefeated = "潮眼退去 · 继续守夜";
+
+    // 章节横幅：chapter 从 0 起，显示"第 N 夜"。标准模式每 5 波换一章。
+    public static string ChapterBanner(int chapter)
+    {
+        switch (chapter)
+        {
+            case 0: return "第一夜 · 灯还亮着";
+            case 1: return "第二夜 · 潮声近了";
+            case 2: return "第三夜 · 影子变多";
+            default: return "第四夜 · 最后一盏";
+        }
+    }
 
     public const string Victory = "灯，又亮了一夜。";
     public const string Death = "灯灭了。";
