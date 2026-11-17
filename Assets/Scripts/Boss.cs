@@ -46,12 +46,13 @@ public class Boss : MonoBehaviour
     private float hoverSeed;
     private bool alternate;
     private bool enraged;
+    private Vector3 enterFrom;         // 入场起点 / 终点 / 时长（v1.4 曾误删，导致 CS0103）
+    private Vector3 enterTo;
+    private float enterDuration;
     // 视觉层参数（只影响 scale/颜色，不碰位置和碰撞开关）
-    private float breathe;             // 待机呼吸相位
     private float flinch;              // 受击/阶段转换的短暂抖动，0~1
     private float chargeTrailTimer;    // 冲撞残影节流
     private float telegraphRingTimer;  // 蓄力光环节流
-    private bool roarDone;
 
     public int Hp { get { return hp; } }
     public int MaxHp { get { return maxHp; } }
@@ -76,11 +77,9 @@ public class Boss : MonoBehaviour
         enterDuration = Mathf.Max(0.2f, duration);
         baseY = to.y;
         hoverSeed = to.x * 1.7f;
-        this.breathe = 0f;
         flinch = 0f;
         chargeTrailTimer = 0f;
         telegraphRingTimer = 0f;
-        roarDone = false;
 
         sr = GetComponent<SpriteRenderer>();
         col = GetComponent<Collider2D>();
