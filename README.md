@@ -1307,3 +1307,16 @@ public struct Spring {
 ```
 Library/ScriptAssemblies/Assembly-CSharp.dll 里应有 Spring / squashSpring / runPhase
 ```
+
+
+### 后记：Spring 也从"独立文件"改成内联了
+
+和 Ambience 一模一样的坑又发生了一次：我建了独立的 `Spring.cs`，手动生成了 `.cs.meta`，
+但 Unity 没认，编辑器直接报 4 个 `CS0246: The type or namespace name 'Spring' could not be found`。
+
+**结论：只要编辑器不响应外部文件变化，任何新 .cs 文件都有风险，不管有没有 meta。**
+最终解法是把 `Spring` 结构体内联进 `PlayerVisual.cs`（用它的现有文件，一定能被编译），
+然后删掉 `Spring.cs` 和它的 meta。代价只是这个文件稍微长一点，换来的是零导入风险。
+
+以后加新工具类，优先内联到已有的 .cs 文件里；确实要建新文件时，必须在编辑器里
+按 Ctrl+R 确认它被导入（dll 里能查到类名）之后再继续。
