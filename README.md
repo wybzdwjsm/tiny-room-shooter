@@ -1659,3 +1659,30 @@ Boss 全退回纯色方块——所以看起来"只是变色"。
 Unity 的 .meta 手工生成极易出错：guid 长度、spriteID、textureType 任一不对都会导致
 资源加载失败。**最稳妥的是直接复制一个已成功的 .meta 再改 guid**，并用 shell 核对
 guid 长度与现有文件一致（这次就是靠 `grep guid | wc` 发现的 56 vs 24）。
+
+## W34b：真正的根因 —— meta 文件 CRLF 行尾（v2.7 续）
+
+上节我判断"guid 长度错"其实是**误判**——56 字符 guid 一直是对的。
+截图第二次反馈后逐字节对比才发现真相：
+
+```
+boss.png.meta（能加载）    CRLF=0    LF=173
+boss_spore.meta（失败）    CRLF=173  LF=173
+```
+
+**团结引擎 1.1.1 静默拒绝导入 CRLF 行尾的 .meta 文件**——不报错，只是
+`Resources.Load` 返回 null，于是 Boss 全退回纯色方块。
+
+为什么 meta 变成 CRLF？因为 git 全局 `core.autocrlf=true`，我最初用 Python
+`io.open(...,"w")` 写文件时被转换成 CRLF；后续每次 git checkout 又转一次
+（那些 "LF will be replaced by CRLF" 警告就是信号，我之前忽略了）。
+
+修复：
+1. 4 个 boss .meta 用二进制方式重写为纯 LF；
+2. 新增 `.gitattributes`，强制 `*.meta / *.cs / *.asset` 用 `eol=lf`，
+   `*.png / *.zip` 标为 binary——从根上阻止 autocrlf 再搞坏；
+3. `git add --renormalize` 后验证：工作区和 git 索引里的 meta 都是 0 个 CRLF；
+4. 顺带把 Boss.cs / RunManager.cs 也转成 LF（C# 编译器虽能吃 CRLF，但统一更稳）。
+
+**这是本项目最隐蔽的一个坑**：guid/spriteID/textureType 全部正确，只是行尾不同，
+Unity 就静默失败。以后手工生成 Unity 资源或 meta，第一件事就是核对行尾。
