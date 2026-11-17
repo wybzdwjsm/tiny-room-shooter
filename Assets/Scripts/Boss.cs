@@ -1,11 +1,57 @@
 using UnityEngine;
 
-// 第 3 波的 Boss：单一大型敌人，循环「漂移 → 蓄力 → 出招 → 硬直」。
-// 出招在「扇形弹幕」和「横向冲撞」之间交替，出招前有 0.5 秒变色蓄力，给玩家反应时间。
+// Boss：单一大型敌人，循环「漂移 → 蓄力 → 出招 → 硬直」。
+// 有 4 种变体（Kind），共用一套状态机，靠参数表区分外观 tint、体型、攻击模式和速度：
+//   TideEye 潮眼      —— 原版：扇形弹幕 + 冲撞
+//   Spore   孢潮      —— 环形弹幕（360°）+ 慢速大范围漂移
+//   Spear   裂鳍      —— 高频冲撞 + 窄扇形，快而凶
+//   Abyss   深渊之瞳  —— 双扇形 + 冲撞，最终 Boss，狂暴更早
 // 死亡不自己结束一局，而是回调 RunManager.BossDefeated()，保持"谁管流程"的边界。
 public class Boss : MonoBehaviour
 {
+    public enum Kind { TideEye, Spore, Spear, Abyss }
+
     public static Boss Instance { get; private set; }
+
+    // 每个变体的配置。tint 是乘到原画上的色调（保留插画细节，不是纯色覆盖）。
+    private struct Spec
+    {
+        public string name;
+        public Color tint;
+        public float scale;
+        public float driftMul;
+        public float chargeMul;
+        public float fanStepMul;     // 扇形角度间隔倍率（越小越密）
+        public int fanCount;         // 单侧弹丸数（环形弹种另算）
+        public bool ring;            // 是否用 360° 环形弹幕
+        public bool doubleFan;       // 是否发射双层扇形
+        public float enrageAt;       // 狂暴血量比例（越小越早狂暴）
+
+        public Spec(string n, Color t, float s, float dm, float cm,
+            float fsm, int fc, bool r, bool df, float ea)
+        {
+            name = n; tint = t; scale = s; driftMul = dm; chargeMul = cm;
+            fanStepMul = fsm; fanCount = fc; ring = r; doubleFan = df; enrageAt = ea;
+        }
+    }
+
+    private static readonly Spec[] Specs =
+    {
+        // TideEye：原版，扇形 + 冲撞
+        new Spec("潮眼", new Color(1f, 0.95f, 0.95f), 1.00f, 1.0f, 1.0f, 1.0f, 3, false, false, 0.5f),
+        // Spore：紫色，环形弹幕，慢漂移但冲撞范围大
+        new Spec("孢潮", new Color(0.72f, 0.55f, 1f), 1.12f, 0.7f, 0.8f, 1.0f, 5, true,  false, 0.45f),
+        // Spear：青色，小而快，窄扇 + 高频冲撞
+        new Spec("裂鳍", new Color(0.45f, 1f, 0.92f), 0.88f, 1.5f, 1.4f, 0.65f, 2, false, false, 0.4f),
+        // Abyss：深红，最大，双扇形 + 冲撞，最早狂暴
+        new Spec("深渊之瞳", new Color(1f, 0.5f, 0.42f), 1.28f, 1.2f, 1.15f, 0.9f, 4, false, true, 0.55f),
+    };
+
+    private Spec spec { get { return Specs[(int)kind]; } }
+
+    private Kind kind = Kind.TideEye;
+    public Kind Type { get { return kind; } }
+    public string TypeName { get { return spec.name; } }
 
     private enum State { Enter, Idle, Telegraph, Burst, Charge, Recover, Dead }
 
@@ -14,9 +60,10 @@ public class Boss : MonoBehaviour
     [SerializeField] private float contactRadiusX = 1.05f;
     [SerializeField] private float contactRadiusY = 1.3f;
 
-    // 体型：仍要明显大于其他单位，但整体跟着角色缩小一档（原来 2.4）
-    private const float BossScale = 1.9f;
+    // 体型基准：明显大于其他单位；实际大小再乘变体的 scale
+    private const float BossBaseScale = 1.9f;
     private const float BossEnterScale = 0.45f;
+    private float BossScale { get { return BossBaseScale * spec.scale; } }
 
     // 有美术时用淡染色做蓄力/狂暴（整块纯色会把画好的 Boss 盖成色块）；
     // 没图时退回原来的纯色方块表现
@@ -29,8 +76,12 @@ public class Boss : MonoBehaviour
     {
         get
         {
-            if (!hasArt) return enraged ? EnragedColor : BaseColor;
-            return enraged ? new Color(1f, 0.55f, 0.58f) : Color.white;
+            Color tint = spec.tint;
+            // 有美术时：把 tint 乘到原画上（保留插画细节），狂暴再偏红一点
+            if (hasArt)
+                return enraged ? new Color(tint.r, tint.g * 0.55f, tint.b * 0.55f) : tint;
+            // 没图时退回纯色方块表现
+            return enraged ? EnragedColor : Color.Lerp(BaseColor, tint, 0.5f);
         }
     }
 
@@ -65,12 +116,13 @@ public class Boss : MonoBehaviour
     private float IdleTime { get { return enraged ? 0.70f : 1.1f; } }
     private float RecoverBurst { get { return enraged ? 0.30f : 0.45f; } }
     private float RecoverCharge { get { return enraged ? 0.45f : 0.70f; } }
-    private float DriftSpeed { get { return enraged ? driftSpeed * 1.6f : driftSpeed; } }
-    private float ChargeSpeed { get { return enraged ? chargeSpeed * 1.2f : chargeSpeed; } }
+    private float DriftSpeed { get { return driftSpeed * spec.driftMul * (enraged ? 1.4f : 1f); } }
+    private float ChargeSpeed { get { return chargeSpeed * spec.chargeMul * (enraged ? 1.2f : 1f); } }
 
-    public void Init(int hpValue, float duration, Vector3 from, Vector3 to)
+    public void Init(int hpValue, float duration, Vector3 from, Vector3 to, Kind bossKind = Kind.TideEye)
     {
         Instance = this;
+        kind = bossKind;
         maxHp = hpValue;
         hp = maxHp;
         enterFrom = from;
@@ -243,23 +295,55 @@ public class Boss : MonoBehaviour
         transform.position = new Vector3(x, y, transform.position.z);
     }
 
-    // 扇形弹幕，正中指向玩家。二阶段从 7 发加到 9 发、扇面更宽。
+    // 主攻击，按变体分三种模式：环形 / 双扇形 / 普通扇形
     private void FireFan()
     {
         Vector2 origin = transform.position;
         Vector2 toPlayer = ((Vector2)PlayerHealth.Instance.transform.position - origin).normalized;
-        int half = enraged ? 4 : 3;
-        float step = enraged ? 0.135f : 0.14f;
-        for (int i = -half; i <= half; i++)
-            EnemyBullet.Spawn(origin, origin + Rotate(toPlayer, i * step) * 3f, "Boss");
+
+        if (spec.ring)
+        {
+            // 孢潮：360° 环形弹幕，没有安全方向，逼玩家跳跃穿过缝隙
+            int n = enraged ? 20 : 14;
+            float offset = Mathf.Atan2(toPlayer.y, toPlayer.x);
+            for (int i = 0; i < n; i++)
+            {
+                float a = offset + i * Mathf.PI * 2f / n;
+                Vector2 d = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
+                EnemyBullet.Spawn(origin, origin + d * 3f, "Boss");
+            }
+            return;
+        }
+
+        int half = spec.fanCount + (enraged ? 1 : 0);
+        float step = (enraged ? 0.14f : 0.16f) * spec.fanStepMul;
+
+        if (spec.doubleFan)
+        {
+            // 深渊之瞳：上下两层错开的扇形，正面也有弹幕，封死直线走位
+            for (int layer = -1; layer <= 1; layer += 2)
+            {
+                Vector2 aim = Rotate(toPlayer, layer * 0.22f);
+                for (int i = -half; i <= half; i++)
+                    EnemyBullet.Spawn(origin, origin + Rotate(aim, i * step) * 3f, "Boss");
+            }
+        }
+        else
+        {
+            for (int i = -half; i <= half; i++)
+                EnemyBullet.Spawn(origin, origin + Rotate(toPlayer, i * step) * 3f, "Boss");
+        }
     }
 
     private void TryContactDamage()
     {
         Vector3 p = PlayerHealth.Instance.transform.position;
-        if (Mathf.Abs(p.x - transform.position.x) < contactRadiusX &&
-            Mathf.Abs(p.y - transform.position.y) < contactRadiusY)
-            PlayerHealth.Instance.TakeDamage(1, "Boss 冲撞");
+        // 判定半径按变体体型缩放，大 Boss 的碰撞范围和它的视觉尺寸一致
+        float rx = contactRadiusX * spec.scale;
+        float ry = contactRadiusY * spec.scale;
+        if (Mathf.Abs(p.x - transform.position.x) < rx &&
+            Mathf.Abs(p.y - transform.position.y) < ry)
+            PlayerHealth.Instance.TakeDamage(1, spec.name + " 冲撞");
     }
 
     public void Hit(Vector2 direction, float damage = 0.25f)
@@ -283,8 +367,8 @@ public class Boss : MonoBehaviour
             return;
         }
 
-        // 半血进二阶段：只用改一次，之后所有时长/速度都读 enraged
-        if (!enraged && hp <= maxHp / 2) Enrage();
+        // 半血进二阶段：只用改一次，阈值按变体（有的 Boss 更早狂暴）
+        if (!enraged && hp <= maxHp * spec.enrageAt) Enrage();
 
         HitFeedback.Play(HitFeedback.Feel.Hit);
         HitParticles.Spawn(transform.position, CurrentColor, 4);
@@ -300,7 +384,7 @@ public class Boss : MonoBehaviour
         HitParticles.Spawn(transform.position, new Color(1f, 0.78f, 0.32f, 1f), 20);
         HitFeedback.Play(HitFeedback.Feel.Kill);
         GameAudio.Play(GameAudio.Sfx.Wave);
-        Debug.Log("[Boss] 半血进入第二阶段：预警更短、扇形 9 发、冲撞更快");
+        Debug.Log("[Boss] " + spec.name + " 进入第二阶段：弹幕更密、冲撞更快");
     }
 
     private System.Collections.IEnumerator FlashWhite()

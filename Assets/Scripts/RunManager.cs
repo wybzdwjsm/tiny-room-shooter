@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v2.3";
+    public const string BuildTag = "v2.4";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -510,11 +510,14 @@ public class RunManager : MonoBehaviour
         go.AddComponent<BoxCollider2D>();
 
         Boss boss = go.AddComponent<Boss>();
-        // 第几个 Boss：两种模式都按章节递增（第 5 波=0，第 10 波=1…），
-        // 不然第 4 章的 Boss 和第 1 章一样好打，通关就没有成长的读数了
+        // 第几个 Boss（0 起）：两种模式都按章节递增
         int bossIndex = ChapterOf(roomIndex);
+        // 选 Boss 类型：4 种循环。标准模式 4 章正好各一种；无尽模式 bossIndex%4 轮流出现。
+        Boss.Kind kind = (Boss.Kind)(bossIndex % 4);
+        // 血量按 bossIndex 递增（不是按类型），保证后期 Boss 更耐打
         int hp = 30 + bossIndex * 12 + Mathf.RoundToInt(stats.enemyHpBonus) * 3;
-        boss.Init(hp, 1.6f, from, to);
+        boss.Init(hp, 1.6f, from, to, kind);
+        Debug.Log("[RunManager] 生成 Boss #" + (bossIndex + 1) + " 类型=" + boss.TypeName + " hp=" + hp);
 
         spawnTimer = 1.6f;
     }
@@ -691,28 +694,28 @@ public class RunManager : MonoBehaviour
         float right = boundRight - 1.2f;
         float span = Mathf.Max(6f, right - left);
 
-        // 4~8 块，按章节略增（后期章平台多一点，但始终封顶 8）
+        // 4~6 块（上层为主），按章节略增但封顶 7。
+        // 不再追求"横向铺满"——重点是让平台出现在更高处，给下层留出清爽的战斗空间。
         int chapter = ChapterOf(roomIndex);
-        int count = Mathf.Clamp(4 + rng.Next(3) + chapter / 2, 4, 8);
+        int count = Mathf.Clamp(4 + rng.Next(3) + chapter / 2, 4, 7);
         float slot = span / count;
 
         for (int i = 0; i < count; i++)
         {
-            // 每块平台占槽位 78%~88%（原来 55%~73%，缝隙太大显得"覆盖不到"）。
-            // 仍留 12%~22% 的缝，玩家能穿下去，不会连成一整条挡路的墙。
-            // 宽度上限从 2.8 提到 4.2：count 少时槽位宽，不提高上限覆盖率会被卡到只有 62%。
-            float w = Mathf.Clamp(slot * (0.78f + (float)rng.NextDouble() * 0.10f), 1.8f, 4.2f);
+            // 每块占槽位 62%~74%，留足缝隙，绝不连成一整条墙。
+            float w = Mathf.Clamp(slot * (0.62f + (float)rng.NextDouble() * 0.12f), 1.6f, 3.6f);
 
             float baseX = left + slot * (i + 0.5f);
             float jitterRange = Mathf.Max(0f, (slot - w) * 0.5f);
             float x = baseX + (float)(rng.NextDouble() - 0.5) * jitterRange * 0.8f;
             x = Mathf.Clamp(x, left + w * 0.5f, right - w * 0.5f);
 
-            // 三条高度带循环（低/中/高），垂直方向也铺开，全场各处都有落脚点；
-            // 相邻两块差 0.9，高台顶面离地 3.0，仍在满跳高度 3.6 内（滞空 1.42s 更从容）。
-            // 高度带按 i%3 循环而不是奇偶，避免"高低高低"形成一条可预料的阶梯墙。
-            int band = i % 3;
-            float lift = band == 0 ? 1.25f : (band == 1 ? 2.15f : 3.0f);
+            // 高度以中高层为主，下层留空：
+            //   i=0 放一块低台(1.7)当踏板，其余在中层(2.4) / 高层(3.1)之间交替。
+            //   高层 3.1 < 满跳 3.4，仍可跳上；低台从原来的 1.25 抬到 1.7，地面附近不再拥挤。
+            float lift;
+            if (i == 0) lift = 1.7f;
+            else lift = (i % 2 == 0) ? 2.4f : 3.1f;
             float y = FloorTop + lift + (float)(rng.NextDouble() - 0.5) * 0.16f;
 
             MakePlatform("Float_" + i, new Vector2(x, y), w, 0.34f,
