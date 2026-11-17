@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v1.2";
+    public const string BuildTag = "v1.3";
 
     public enum Phase { Title, Playing, Choosing, Result }
 

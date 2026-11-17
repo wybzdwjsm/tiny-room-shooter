@@ -56,6 +56,11 @@ public class Weapon : MonoBehaviour
             Vector2 aim = AimDirection();
             GameAudio.Play(GameAudio.Sfx.Shoot);   // 一次开火只播一声，散射不叠加
             if (RunManager.HasInstance) RunManager.Instance.NotifyShot(count);
+
+            // 枪口闪光 + 后坐力：位置用与子弹相同的枪口偏移，视觉和判定对齐
+            Vector2 muzzle = (Vector2)transform.position + aim * muzzleOffset;
+            PlayerVisual.FireKick(muzzle, aim);
+
             for (int i = 0; i < count; i++)
                 Fire(Rotate(aim, (i - (count - 1) * 0.5f) * 0.12f));
         }

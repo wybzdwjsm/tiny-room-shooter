@@ -18,6 +18,7 @@ public class EnemyVisual : MonoBehaviour
     private SpriteRenderer visualSprite;
     private float phase;               // 每只错开，避免所有敌人同时呼吸
     private float lastX;
+    private float afterImageTimer;
 
     public static void Attach(GameObject go)
     {
@@ -81,6 +82,15 @@ public class EnemyVisual : MonoBehaviour
             float speed = Time.deltaTime > 0f ? dx / Time.deltaTime : 0f;
             lean = Mathf.Clamp(-speed / 6f, -1f, 1f) * 10f;
             breath *= 0.35f;           // 冲锋时收敛呼吸，避免姿态发飘
+
+            // 高速冲刺时留残影：每 0.07 秒一个，读起来是一条运动轨迹
+            afterImageTimer -= Time.deltaTime;
+            if (Mathf.Abs(speed) > 5f && afterImageTimer <= 0f)
+            {
+                afterImageTimer = 0.07f;
+                FxRings.AfterImage(transform.position, visualSprite.sprite,
+                    visualSprite.color, visualSprite.flipX);
+            }
         }
 
         visualRoot.localScale = new Vector3(

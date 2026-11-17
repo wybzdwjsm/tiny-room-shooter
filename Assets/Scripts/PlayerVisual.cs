@@ -24,6 +24,9 @@ public class PlayerVisual : MonoBehaviour
     private float faceDir = 1f;
     private float squash;              // 落地压扁量，0~1，随时间回弹
     private float stretch;             // 起跳拉伸量
+    private float recoil;              // 开火后坐，沿射击反方向偏移 + 轻微缩放
+    private Vector2 recoilDir;
+    private float hurtLock;            // 受击后短时间内不被开火后坐覆盖
     private bool wasGrounded;
     private bool visible = true;
     private Vector3 baseScale = Vector3.one;
@@ -44,6 +47,25 @@ public class PlayerVisual : MonoBehaviour
     }
 
     // 受伤闪烁时由 PlayerHealth 调用
+    // Weapon 每次开火调用：枪口闪光 + 后坐力
+    public static void FireKick(Vector2 muzzle, Vector2 dir)
+    {
+        if (instance == null || instance.hurtLock > 0f) return;
+        instance.recoil = 1f;
+        instance.recoilDir = -dir;
+        FxRings.Muzzle(muzzle, dir, new Color(1f, 0.86f, 0.42f, 0.9f));
+    }
+
+    // PlayerHealth 受伤时调用：视觉层后仰 + 短暂放大，强化"挨了一下"
+    public static void Hurt(Vector2 fromDir)
+    {
+        if (instance == null) return;
+        instance.recoil = 1f;
+        instance.hurtLock = 0.22f;
+        instance.recoilDir = new Vector2(-fromDir.x, 0.35f).normalized;
+        HitParticles.Spawn(instance.transform.position, new Color(1f, 0.45f, 0.5f, 1f), 8);
+    }
+
     public static void SetVisible(bool v)
     {
         if (instance != null) instance.ApplyVisible(v);
@@ -162,17 +184,24 @@ public class PlayerVisual : MonoBehaviour
         // 落地瞬间：压扁 + 一簇扬尘
         if (grounded && !wasGrounded && vy < -2f)
         {
-            squash = Mathf.Clamp01(-vy / 14f) * 0.8f + 0.2f;
+            float strength = Mathf.Clamp01(-vy / 14f);
+            squash = strength * 0.8f + 0.2f;
             HitParticles.Spawn((Vector2)transform.position + Vector2.down * 0.28f, DustColor, 5);
+            FxRings.Land((Vector2)transform.position + Vector2.down * 0.31f, strength);
         }
-        // 起跳瞬间：拉长
+        // 起跳瞬间：拉长 + 扬尘环
         if (!grounded && wasGrounded && vy > 0f)
+        {
             stretch = Mathf.Clamp01(vy / 14f) * 0.7f + 0.2f;
+            FxRings.Jump((Vector2)transform.position + Vector2.down * 0.30f);
+        }
 
         wasGrounded = grounded;
 
         squash = Mathf.MoveTowards(squash, 0f, Time.deltaTime * 4.5f);
         stretch = Mathf.MoveTowards(stretch, 0f, Time.deltaTime * 4.5f);
+        recoil = Mathf.MoveTowards(recoil, 0f, Time.deltaTime * 9f);
+        hurtLock = Mathf.Max(0f, hurtLock - Time.deltaTime);
 
         // 待机呼吸（只在地面上、速度很小时）
         float breath = (grounded && Mathf.Abs(vx) < 0.2f)
@@ -182,6 +211,10 @@ public class PlayerVisual : MonoBehaviour
         float sy = 1f + breath + stretch * 0.30f - squash * 0.28f;
         float sx = 1f - breath * 0.5f - stretch * 0.16f + squash * 0.24f;
         visualRoot.localScale = new Vector3(baseScale.x * sx, baseScale.y * sy, 1f);
+
+        // 后坐：视觉层往射击反方向"顿"一下（最多 0.06 单位），不碰根节点
+        float rk = recoil * recoil * 0.06f;
+        visualRoot.localPosition = new Vector3(recoilDir.x * rk, recoilDir.y * rk, 0f);
 
         // 奔跑倾斜：速度越大越前倾，最多 8 度
         float tilt = Mathf.Clamp(-vx / 8f, -1f, 1f) * 8f;

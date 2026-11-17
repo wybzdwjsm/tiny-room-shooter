@@ -149,7 +149,9 @@ public class PlayerHealth : MonoBehaviour
         invincibleUntil = Time.time + invincibleTime;
         HitFeedback.Play(HitFeedback.Feel.Hurt);   // 受伤才有命中停顿 + 较强震动
         GameAudio.Play(GameAudio.Sfx.Hurt);
-        HitParticles.Spawn(transform.position, new Color(1f, 0.4f, 0.45f, 1f), 6);
+        // 后仰 + 红色爆散由视觉层统一处理（和开火后坐共用一套偏移，不会互相打架）
+        // 伤害来源没有方向信息，用"朝后上方"作为统一的受击反应
+        PlayerVisual.Hurt(new Vector2(-1f, 0.35f).normalized);
         StartCoroutine(Flash());
 
         if (hp <= 0)
