@@ -17,14 +17,21 @@ public class Ambience : MonoBehaviour
     private float[] phases;
     private float left, right, bottom, top;
 
+    private static Ambience instance;      // 用静态引用保证单例，不依赖 FindObjectOfType
+
     public static void Ensure(Camera cam)
     {
         if (cam == null) return;
-        if (FindObjectOfType<Ambience>() != null) return;   // Unity 2022 / 团结引擎兼容写法
+        if (instance != null) return;
 
         GameObject go = new GameObject("Ambience");
-        Ambience a = go.AddComponent<Ambience>();
-        a.Build(cam);
+        instance = go.AddComponent<Ambience>();
+        instance.Build(cam);
+    }
+
+    private void OnDestroy()
+    {
+        if (instance == this) instance = null;
     }
 
     private void Build(Camera cam)
@@ -90,7 +97,9 @@ public class Ambience : MonoBehaviour
         }
     }
 
-    private static float Fract(float v) { return v - Mathf.Floor(v); }
+    // 取小数部分：v - floor(v)。用 (int) 截断实现，不依赖 Mathf.Floor。
+    // 微光点的坐标恒为正数，所以 (int) 截断等价于 floor。
+    private static float Fract(float v) { return v - (int)v; }
 
     private static Sprite GetDot()
     {
