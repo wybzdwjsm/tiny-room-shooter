@@ -1372,3 +1372,44 @@ Library/ScriptAssemblies/Assembly-CSharp.dll 里应有 Spring / squashSpring / r
 **项目目录是唯一权威副本；workspace 的 `unity-starter/` 只是源码备份，
 同步方向永远是 项目 → workspace，不能反过来。**
 每次同步后必须用 grep 验证关键标识（如 `StandardChapters`、`ChapterBanner`）在两边都存在。
+
+## W28：更长的滞空 + 调试跳波（v2.1）
+
+### 滞空：0.86s → 1.17s
+
+原来 `jumpHeight=3.2 / timeToApex=0.46`，一轮跳跃约 0.86 秒。
+改成 `3.4 / 0.58`，下落重力倍率 `1.35 → 1.25`，一轮约 1.17 秒：
+
+```
+h=3.4, t=0.58  ->  v0=2h/t≈11.7, gUp≈20.3, gDown≈25.3
+```
+
+跳得更高、飘得更久，平台间距更好读。`jumpCut=0.5` 仍在——松开跳跃键会把上升速度砍半，
+所以想做短跳依然做得到，不会所有跳都变成"飘半天"。
+
+**坑：PlayerStats 是 ScriptableObject，真正生效的是 `Assets/Data/PlayerStats.asset` 里的序列化值，
+不是 `.cs` 里的默认值。** 这次两个都改了：
+- `.asset`：实际运行时读的（Inspector 里看到的）
+- `.cs`：默认值，保证以后重建资产时不会退回旧值
+
+这和之前 `roomCount` 的 SerializeField 是同一类问题——Unity 的序列化值会覆盖代码默认值。
+
+### 调试跳波：Ctrl+F9
+
+20 波一局要 15~20 分钟，等玩家玩到第 4 章才能验证 Boss 太慢。
+加了 `Ctrl+F9` 直接清场跳到下一波（`DebugWaveSkip`），能连续快速验证：
+每章的敌人配置、章首横幅、4 个 Boss 的血量递增、第 20 波通关结算。
+
+用 `#if UNITY_EDITOR` 包住——**正式 WebGL 包里这段代码根本不存在**，玩家不会误触。
+组合键（Ctrl+F9）而不是单键，进一步避免调试时误按。
+
+### 顺手修的小问题
+
+第一夜开局原来显示 `Story.WaveBanner(0)`（"第一次涨潮"），和后面每章的
+"第一夜/第二夜…"横幅不统一。改成开局就走 `ChapterBanner(0)`，章节提示从头一致。
+
+### 当前状态
+
+`BuildTag = v2.1`。静态验证：括号平衡、`#if/#endif` 配对、滞空值三处一致。
+编辑器仍不响应外部文件变化，需手动 `Ctrl+R`；跑起来先按 Ctrl+F9 连跳验证
+第 5/10/15/20 波的 Boss 与章节横幅，再正常玩一局感受新滞空。

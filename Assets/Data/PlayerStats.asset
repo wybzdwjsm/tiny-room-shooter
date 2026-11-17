@@ -12,9 +12,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 85cd34e1157e42345b8c2df9b23f64c8, type: 3}
   m_Name: PlayerStats
   m_EditorClassIdentifier: 
-  jumpHeight: 3.2
-  timeToApex: 0.46
-  fallGravityMultiplier: 1.35
+  jumpHeight: 3.4
+  timeToApex: 0.58
+  fallGravityMultiplier: 1.25
   maxFallSpeed: 18
   moveSpeed: 8
   groundAccel: 60

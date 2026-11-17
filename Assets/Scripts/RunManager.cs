@@ -13,7 +13,7 @@ using UnityEngine;
 public class RunManager : MonoBehaviour
 {
     // 版本标记：标题页右下角和启动日志都会打印，用来确认"跑的是不是最新代码"
-    public const string BuildTag = "v2.0";
+    public const string BuildTag = "v2.1";
 
     public enum Phase { Title, Playing, Choosing, Result }
 
@@ -295,7 +295,42 @@ public class RunManager : MonoBehaviour
             else if (Input.GetKeyDown(KeyCode.Alpha2) && choices.Count > 1) Pick(choices[1]);
             else if (Input.GetKeyDown(KeyCode.Alpha3) && choices.Count > 2) Pick(choices[2]);
         }
+
+        // 调试跳波：Ctrl+F9 清掉当前波所有敌人直接进下一波，用来快速验证 20 波流程 / 各章 Boss。
+        // 用 UNITY_EDITOR 条件编译保证正式 WebGL 包里这段代码不存在，玩家不会误触。
+#if UNITY_EDITOR
+        if (phase == Phase.Playing && Input.GetKeyDown(KeyCode.F9)
+            && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)))
+        {
+            DebugWaveSkip();
+        }
+#endif
     }
+
+#if UNITY_EDITOR
+    // 跳到下一波：清理敌人/Boss → roomIndex++ → 直接开新波（不走三选一，方便连续测试）
+    private void DebugWaveSkip()
+    {
+        ClearEnemies();
+        ClearBoss();
+        spawning = false;
+        spawnTimer = 0f;
+
+        if (roomIndex + 1 >= roomCount)
+        {
+            Debug.Log("[DebugWaveSkip] 已是最后一波，改为触发胜利结算");
+            Finish(true);
+            return;
+        }
+
+        roomIndex++;
+        phase = Phase.Playing;
+        AnnounceWave();
+        StartWave();
+        Debug.Log("[DebugWaveSkip] 跳到第 " + (roomIndex + 1) + "/" + roomCount + " 波"
+            + (IsBossWave ? "（Boss 波）" : ""));
+    }
+#endif
 
     // 不带模式的调用（重开本局 / 结算页 R）沿用当前模式
     public void BeginRun(int newSeed)
@@ -335,7 +370,8 @@ public class RunManager : MonoBehaviour
         BuildRoom();
 
         phase = Phase.Playing;
-        ShowBanner(Story.WaveBanner(0));
+        // 开局横幅：标准模式从"第一夜"开始，和后面每章的章节横幅保持一致
+        ShowBanner(mode == Mode.Standard ? Story.ChapterBanner(0) : Story.WaveBanner(0));
         StartWave();
         if (PlayerHealth.HasInstance) PlayerHealth.Instance.ResetHealth();
     }
